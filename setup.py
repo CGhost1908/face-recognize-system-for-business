@@ -50,18 +50,19 @@ def main():
         print("\n[STEP 4] Creating virtual environment...")
         if run_command("python3 -m venv venv", shell=True):
             print("✓ Virtual environment created")
+        else:
+            print("✗ Failed to create virtual environment")
+            print("  Try: python3 -m venv venv")
+            return
         
         # Install requirements
         print("\n[STEP 5] Installing Python dependencies (this may take a while)...")
-        if IS_WINDOWS:
-            cmd = "venv\\Scripts\\pip install -r requirements-pi.txt"
-        else:
-            cmd = "source venv/bin/activate && pip install -r requirements-pi.txt"
+        cmd = "source venv/bin/activate && pip install -r requirements-pi.txt"
         
         if run_command(cmd, shell=True):
             print("✓ Dependencies installed")
         else:
-            print("✗ Failed to install some dependencies")
+            print("⚠ Some dependencies may have failed to install")
             print("  Try: source venv/bin/activate && pip install -r requirements-pi.txt")
         
     elif IS_WINDOWS:
@@ -70,10 +71,11 @@ def main():
         
         # Create venv
         print("\n[STEP 1] Creating virtual environment...")
-        if run_command("python -m venv venv"):
+        if run_command("python -m venv venv", shell=True):
             print("✓ Virtual environment created")
         else:
             print("✗ Failed to create virtual environment")
+            print("  Try: python -m venv venv")
             return
         
         # Install requirements
@@ -82,7 +84,7 @@ def main():
         if run_command(cmd, shell=True):
             print("✓ Dependencies installed")
         else:
-            print("✗ Failed to install some dependencies")
+            print("⚠ Some dependencies may have failed to install")
             print("  Try: venv\\Scripts\\pip install -r requirements-windows.txt")
     else:
         print("\n[DETECTED] Linux System (Generic)")
@@ -90,10 +92,11 @@ def main():
         
         # Create venv
         print("\n[STEP 1] Creating virtual environment...")
-        if run_command("python3 -m venv venv"):
+        if run_command("python3 -m venv venv", shell=True):
             print("✓ Virtual environment created")
         else:
             print("✗ Failed to create virtual environment")
+            print("  Try: python3 -m venv venv")
             return
         
         # Install requirements
@@ -101,6 +104,9 @@ def main():
         cmd = "source venv/bin/activate && pip install -r requirements-pi.txt"
         if run_command(cmd, shell=True):
             print("✓ Dependencies installed")
+        else:
+            print("⚠ Some dependencies may have failed to install")
+            print("  Try: source venv/bin/activate && pip install -r requirements-pi.txt")
     
     print("\n" + "="*60)
     print("Setup Complete!")
