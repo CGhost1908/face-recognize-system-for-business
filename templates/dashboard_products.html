@@ -1,0 +1,30 @@
+{% extends "dashboard_base.html" %}
+
+{% block title %}Ürünler{% endblock %}
+{% block page_title %}Ürün Yönetimi{% endblock %}
+
+{% block content %}
+<section id="products-page">
+    <div class="page-header">
+        <h2>Ürün Yönetimi</h2>
+        <button class="btn btn-primary" id="addProductBtn">+ Yeni Ürün Ekle</button>
+    </div>
+    
+    <div class="search-filter">
+        <input type="text" id="searchInput" placeholder="Ürün ara...">
+        <select id="sortBy">
+            <option value="name">Ad'a göre sırala</option>
+            <option value="price">Fiyata göre</option>
+            <option value="stock">Stoka göre</option>
+        </select>
+    </div>
+    
+    <div class="products-container" id="productsContainer">
+        <!-- Products will be loaded here -->
+    </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='pages/products.js') }}"></script>
+{% endblock %}

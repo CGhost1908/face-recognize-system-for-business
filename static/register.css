@@ -1,0 +1,71 @@
+/* 
+.menu-button{
+    border: none;
+    color: white;
+    padding: 10px 32px;
+    text-align: center;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    background-color: transparent;
+    font-size: 16px;
+    cursor: pointer;
+    transition: all 0.1s ease;
+    margin: 0;
+    width: max-content;
+    height: 100%;
+}
+
+.camera-icon{
+    margin-right: 10px;
+    color: #fff;
+    display: none;
+    width: 48px;
+    height: 48px;
+    font-size: 48px !important;
+    border-radius: 50%;
+    justify-content: center;
+    align-items: center;
+    transition: all 0.3s ease;
+    animation: blink 1s infinite;
+    cursor: pointer;
+}
+
+.menu-button:hover{
+    background-color: #0000004d;
+}
+
+.menu-button:disabled{
+    color: #ffffff7e;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.menu-overlay{
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100px;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 10;
+    display: none;
+}
+
+img{
+    border-radius:8px;
+    border:3px solid #0f0;
+    object-fit: cover;
+}
+
+a{
+    color:#7ef;
+}
+
+#message{
+    margin-top: 10px;
+    font-weight: bold;
+}
+
+.success { color: green; }
+.error { color: red; } */

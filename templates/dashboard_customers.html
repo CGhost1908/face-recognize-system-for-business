@@ -1,0 +1,30 @@
+{% extends "dashboard_base.html" %}
+
+{% block title %}Müşteriler{% endblock %}
+{% block page_title %}Müşteri Yönetimi{% endblock %}
+
+{% block content %}
+<section id="customers-page">
+    <div class="page-header">
+        <h2>Müşteri Yönetimi</h2>
+        <button class="btn btn-primary" id="addCustomerBtn">Yeni Müşteri Ekle</button>
+    </div>
+    
+    <div class="search-filter">
+        <input type="text" id="searchInput" placeholder="Müşteri ara...">
+        <select id="sortBy">
+            <option value="name">Ad'a göre sırala</option>
+            <option value="date">Son giriş</option>
+            <option value="spending">Toplam harcama</option>
+        </select>
+    </div>
+    
+    <div class="customers-container" id="customersContainer">
+        <!-- Customers will be loaded here -->
+    </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='pages/customers.js') }}"></script>
+{% endblock %}

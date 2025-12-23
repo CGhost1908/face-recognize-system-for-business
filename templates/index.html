@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Yüz Tanıma Sistemi</title>
+
+    <script src="{{ url_for('static', filename='main.js') }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&icon_names=arrow_back"/>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&icon_names=camera" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Afacad+Flux:wght@100..1000&family=Gidole&display=swap" rel="stylesheet" />
+</head>
+<body>
+    <div class="menu">
+        <div class="menu-row">
+            <span id="camera-icon" class="material-symbols-outlined camera-icon" style="display:none;" onclick="stopRecognition()">camera</span>
+            <a class="menu-button" onclick="triggerRecognize()">Recognize Me</a>
+            <a class="menu-button" href="{{ url_for('customers') }}">Edit Customer</a>
+            <a class="menu-button" href="{{ url_for('register') }}">Register Customer</a>
+            <a class="menu-button" href="{{ url_for('customers') }}">Delete Customer</a>
+        </div>
+        <button class="toggle-cam-mode" onclick="toggleCameraMode()">Show Cam</button>
+        <div class="cam-select">
+            <div class="cam-radio-group">
+                <input type="radio" id="cam0" name="cam-select" value="0" onchange="camChanged(this.value)" checked>
+                <label for="cam0">0</label>
+
+                <input type="radio" id="cam1" name="cam-select" value="1" onchange="camChanged(this.value)">
+                <label for="cam1">1</label>
+
+                <input type="radio" id="cam2" name="cam-select" value="2" onchange="camChanged(this.value)">
+                <label for="cam2">2</label>
+
+                <input type="radio" id="cam3" name="cam-select" value="3" onchange="camChanged(this.value)">
+                <label for="cam3">3</label>
+
+                <input type="radio" id="cam4" name="cam-select" value="4" onchange="camChanged(this.value)">
+                <label for="cam4">4</label>
+
+                <input type="radio" id="cam5" name="cam-select" value="5" onchange="camChanged(this.value)">
+                <label for="cam5">5</label>
+
+                <input type="radio" id="camCustom" name="cam-select" value="6" onchange="camChanged(this.value)">
+                <label for="camCustom">IP</label>
+            </div>
+        </div>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=camera" />
+        <!--
+        -->
+    </div>
+
+    <div class="left-panel">
+        <!--
+        <div class="left-panel-wrapper">
+            <button class="scroll-left" onclick="scrollVerticalLeft(document.querySelector('.left-panel-top'))">◀</button>
+
+            <nav class="left-panel-top">    
+                <button class="left-panel-button">Tercihleri Göster</button>
+                <button class="left-panel-button">Tercih Ekle</button>
+                <button class="left-panel-button">Sipariş Girişi</button>
+                <button class="left-panel-button">Yemek Öner</button>
+            </nav>
+
+            <button class="scroll-right" onclick="scrollVerticalRight(document.querySelector('.left-panel-top'))">▶</button>
+        </div>
+        -->
+        <div class="user">
+            <img id="videoFeed" src="{{ url_for('video_feed') }}"/>      
+            <div class="user-info">
+                <h1 id="recognized-name">No entrance</h1>
+                <p class="last-login-label">Last Entry: <span id="last-login-text"></span></p>
+                <img id="recognized-image" src="https://cdn.pixabay.com/photo/2023/02/18/11/00/icon-7797704_640.png"/>
+                <nav>
+                    <h1>Total Spent:</h1>
+                    <h1 id="total-spent-text"> 0₺</h1>
+                </nav>
+            </div>
+        </div>
+        <span class="separator"></span>
+        <div class="user-stats">
+            <h2 class="medium-title">Most Preferred Foods</h2>
+            <div class="percentage">There is no data.</div>
+
+            <h2 class="medium-title">Order History</h2>
+            <div class="order-history">There is no data.</div>
+        </div>
+    </div>
+    <div class="center-panel">
+        <div class="order">
+            <h1 class="order-title">Order Entrance</h1>
+            <div class="items">
+            <!--
+                <div id="food-autocomplete-wrapper" class="autocomplete-wrapper">
+                    <label for="food-input">Food:</label>
+                    <div>
+                        <input type="text" id="food-input" placeholder="Choose food...">
+                        <div id="food-results" class="autocomplete-list"></div>
+                        <button class="items-button" onclick="addFood()">Add Food</button>
+                    </div>
+                </div>
+
+                <div id="drink-autocomplete-wrapper" class="autocomplete-wrapper">
+                    <label for="drink-input">Beverage:</label>
+                    <div>
+                        <input type="text" id="drink-input" placeholder="Choose beverage...">
+                        <div id="drink-results" class="autocomplete-list"></div>
+                        <button class="items-button" onclick="addDrink()">Add Drink</button>
+                    </div>
+                </div>
+                -->
+            </div>
+            <nav class="order-nav">
+                <h4>
+                <p>Weather:</p>
+                <select class="order-select" name="" id="weather2">
+                    <option value="gunesli">Sunny</option>
+                    <option value="bulutlu">Cloudy</option>
+                    <option value="yagmurlu">Rainy</option>
+                </h4>
+                </select>
+                <h4>
+                    <p>Meal:</p>
+                    <select class="order-select" name="" id="meal2">
+                        <option value="kahvalti">Breakfast</option>
+                        <option value="ogle yemegi">Lunch</option>
+                        <option value="aksam yemegi">Dinner</option>
+                    </select>
+                </h4>
+                <h4>
+                    <p>Temperature:</p>
+                    <input type="number" id="temperature" value="0" />
+                </h4>
+            </nav>
+
+            <nav style="display: flex; width: calc(100% - 40px); gap: 20px; padding: 0 20px; align-items: center;">
+                <button class="button-class" onclick="openSuggestFood()">Suggest Food</button>
+                <button class="button-class order-food-button" onclick="orderFood()">Give Order</button>
+            </nav>
+        </div>
+
+        <div class="suggestion">
+            <div class="suggestion-popup">
+                <h1 class="suggestion-title">Suggest Food</h1>
+                <nav>
+                    <h4>Meal:</h4>
+                    <select class="suggestion-select" name="" id="meal">
+                        <option value="kahvalti">Breakfast</option>
+                        <option value="ogle yemegi">Lunch</option>
+                        <option value="aksam yemegi">Dinner</option>
+                    </select>
+                </nav>
+                <nav>
+                    <h4>Drink:</h4>
+                    <select class="suggestion-select" name="" id="beverage">
+                        <option value="cola">Cola</option>
+                        <option value="ayran">Fanta</option>
+                        <option value="sprite">Sprite</option>
+                        <option value="ayran">Ayran</option>
+                        <option value="limonata">Lemonade</option>
+                        <option value="milkshake">Milkshake</option>
+                        <option value="none">None</option>
+                    </select>
+                </nav>
+                <nav>
+                    <h4>Weather:</h4>
+                    <select class="suggestion-select" name="" id="weather">
+                        <option value="gunesli">Sunny</option>
+                        <option value="bulutlu">Cloudy</option>
+                        <option value="yagmurlu">Rainy</option>
+                    </select>
+                </nav>
+                <nav>
+                    <h4>Temperature:</h4>
+                    <input type="number" id="temperature" value="0" />
+                </nav>
+                <button class="button-class" onclick="suggestFood()" style="margin-top: 20px; width: 250px;">Suggest</button>
+            </div>
+        </div>
+
+    </div>
+
+    <div class="right-panel">
+        <h1 class="last-customers-title">Last Customers</h1>
+        <div class="last-customers">
+
+        </div>
+        <!--
+        <div class="weather">
+            <div class="weather-details">
+                <h1 class="location" style="margin-bottom:0px;"></h1>
+                <img class="icon"/>
+                <h1 class="temperature" style="margin-top:0px;">0°C</h1>
+            </div>
+        </div>
+        -->
+    </div>
+</body>
+</html>

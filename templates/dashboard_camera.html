@@ -1,0 +1,31 @@
+{% extends "dashboard_base.html" %}
+
+{% block title %}Kamera{% endblock %}
+{% block page_title %}Kamera Kontrolü{% endblock %}
+
+{% block content %}
+<section id="camera-page">
+    <div class="page-header">
+        <h2>Kamera Kontrolü</h2>
+    </div>
+    
+    <div class="camera-container">
+        <div class="video-feed">
+            <img id="cameraFeed" src="/video_feed" alt="Kamera Akışı" style="width: 100%; border-radius: 8px;">
+        </div>
+        <div class="camera-info">
+            <h3>Kamera Bilgisi</h3>
+            <div class="info-box">
+                <p><strong>Mevcut Kamera:</strong> <span id="currentCamera">0</span></p>
+                <p><strong>Çözünürlük:</strong> <span id="cameraResolution">640x480</span></p>
+                <p><strong>Durum:</strong> <span id="cameraStatusInfo" style="color: green;">✓ Aktif</span></p>
+                <p><strong>FPS:</strong> <span id="cameraFPS">30</span></p>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='pages/camera.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Admin Dashboard{% endblock %} - Yüz Tanıma Sistemi</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <div class="dashboard-container">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>Yüz Tanıma Admin</h2>
+                <button class="sidebar-toggle" id="sidebarToggle">☰</button>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="{{ url_for('dashboard') }}" class="nav-item {% if current_page == 'home' %}active{% endif %}">
+                    <span class="icon">🏠</span>
+                    <span class="label">Ana Sayfa</span>
+                </a>
+                <a href="{{ url_for('customers') }}" class="nav-item {% if current_page == 'customers' %}active{% endif %}">
+                    <span class="icon">👥</span>
+                    <span class="label">Müşteriler</span>
+                </a>
+                <a href="{{ url_for('camera_page') }}" class="nav-item {% if current_page == 'camera' %}active{% endif %}">
+                    <span class="icon">📷</span>
+                    <span class="label">Kamera</span>
+                </a>
+                <a href="{{ url_for('reports_page') }}" class="nav-item {% if current_page == 'reports' %}active{% endif %}">
+                    <span class="icon">📊</span>
+                    <span class="label">Raporlar</span>
+                </a>
+                <a href="{{ url_for('products_page') }}" class="nav-item {% if current_page == 'products' %}active{% endif %}">
+                    <span class="icon">📦</span>
+                    <span class="label">Ürünler</span>
+                </a>
+                <a href="{{ url_for('settings_page') }}" class="nav-item {% if current_page == 'settings' %}active{% endif %}">
+                    <span class="icon">⚙️</span>
+                    <span class="label">Ayarlar</span>
+                </a>
+            </nav>
+        </aside>
+
+        <main class="main-content">
+            <header class="topbar">
+                <div class="topbar-left">
+                    <h1 id="pageTitle">{% block page_title %}Dashboard{% endblock %}</h1>
+                </div>
+                <div class="topbar-right">
+                    <div class="cam-select">
+                        <div class="cam-radio-group">
+                            <input type="radio" id="cam0" name="cam-select" value="0" onchange="camChanged(this.value)" checked>
+                            <label for="cam0">0</label>
+                            <input type="radio" id="cam1" name="cam-select" value="1" onchange="camChanged(this.value)">
+                            <label for="cam1">1</label>
+                            <input type="radio" id="cam2" name="cam-select" value="2" onchange="camChanged(this.value)">
+                            <label for="cam2">2</label>
+                            <input type="radio" id="cam3" name="cam-select" value="3" onchange="camChanged(this.value)">
+                            <label for="cam3">3</label>
+                            <input type="radio" id="cam4" name="cam-select" value="4" onchange="camChanged(this.value)">
+                            <label for="cam4">4</label>
+                            <input type="radio" id="cam5" name="cam-select" value="5" onchange="camChanged(this.value)">
+                            <label for="cam5">5</label>
+                            <input type="radio" id="camCustom" name="cam-select" value="6" onchange="camChanged(this.value)">
+                            <label for="camCustom">IP</label>
+                        </div>
+                    </div>
+                    <div class="user-menu">
+                        <span id="username">Admin</span>
+                        <button class="user-button" id="userMenuBtn">👤</button>
+                        <div class="dropdown-menu" id="userDropdown">
+                            <a href="{{ url_for('settings_page') }}">Profil</a>
+                            <a href="#" id="logoutLink">Çıkış Yap</a>
+                        </div>
+                    </div>
+                </div>
+            </header>
+            <div class="content">
+                {% block content %}{% endblock %}
+            </div>
+        </main>
+    </div>
+
+    <div class="alert alert-info" id="infoAlert"></div>
+    <div class="alert alert-error" id="errorAlert"></div>
+    <div class="alert alert-success" id="successAlert"></div>
+
+    <script src="{{ url_for('static', filename='dashboard-base.js') }}"></script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Login - Yüz Tanıma Sistemi</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='login.css') }}">
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-box">
+            <div class="login-header">
+                <h1>Admin Paneli</h1>
+                <p>Yüz Tanıma Sistemi</p>
+            </div>
+
+            <form id="loginForm" class="login-form">
+                <div class="form-group">
+                    <label for="username">Kullanıcı Adı</label>
+                    <input 
+                        type="text" 
+                        id="username" 
+                        name="username" 
+                        required 
+                        placeholder="Kullanıcı adınızı girin"
+                        autocomplete="username"
+                    >
+                    <span class="error-message" id="usernameError"></span>
+                </div>
+
+                <div class="form-group">
+                    <label for="password">Şifre</label>
+                    <div class="password-container">
+                        <input 
+                            type="password" 
+                            id="password" 
+                            name="password" 
+                            required 
+                            placeholder="Şifrenizi girin"
+                            autocomplete="current-password"
+                        >
+                        <button type="button" class="toggle-password" id="togglePassword">
+                            <span class="eye-icon">👁️</span>
+                        </button>
+                    </div>
+                    <span class="error-message" id="passwordError"></span>
+                </div>
+
+                <div class="form-group remember-me">
+                    <input type="checkbox" id="rememberMe" name="rememberMe">
+                    <label for="rememberMe">Beni hatırla</label>
+                </div>
+
+                <button type="submit" class="login-button" id="loginBtn">
+                    <span class="button-text">Giriş Yap</span>
+                    <span class="loading-spinner" id="spinner" style="display: none;"></span>
+                </button>
+            </form>
+
+            <div class="form-links">
+                <!--
+                <a href="#" id="forgotPassword">Şifremi unuttum</a>
+                <span class="divider">|</span>
+                -->
+                <a href="{{ url_for('index') }}">Ana Sayfa</a>
+            </div>
+
+            <div class="alert alert-info" id="infoAlert" style="display: none;">
+                <span id="alertMessage"></span>
+            </div>
+
+            <div class="alert alert-error" id="errorAlert" style="display: none;">
+                <span id="errorMessage"></span>
+            </div>
+
+            <div class="alert alert-success" id="successAlert" style="display: none;">
+                <span id="successMessage"></span>
+            </div>
+        </div>
+
+        <div class="login-footer">
+            <p>&copy; 2025 Yüz Tanıma Performans Sistemi. Tüm hakları saklıdır.</p>
+        </div>
+    </div>
+
+    <!-- Forgot Password Modal -->
+    <div class="modal" id="forgotPasswordModal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2>Şifre Sıfırla</h2>
+            <form id="forgotPasswordForm">
+                <div class="form-group">
+                    <label for="resetEmail">E-posta Adresi</label>
+                    <input type="email" id="resetEmail" name="email" required placeholder="E-posta adresinizi girin">
+                </div>
+                <button type="submit" class="login-button">Şifre Sıfırla</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='login.js') }}"></script>
+</body>
+</html>

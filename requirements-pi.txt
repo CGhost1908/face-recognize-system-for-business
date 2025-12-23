@@ -1,0 +1,13 @@
+# Raspberry Pi Requirements (Optimized)
+Flask==2.3.0
+opencv-contrib-python==4.8.0.76
+numpy==1.24.3
+Pillow==10.0.0
+requests==2.31.0
+
+# Optional: TensorFlow-lite is lighter on Pi
+# tensorflow-lite-runtime  # Uncomment if using TensorFlow Lite
+
+# Optional: face-recognition requires dlib which is heavy on Pi
+# face-recognition==1.3.5
+# dlib==19.24.2  # Very slow to install on Pi, consider pre-built wheels

@@ -1,0 +1,46 @@
+{% extends "dashboard_base.html" %}
+
+{% block title %}Raporlar{% endblock %}
+{% block page_title %}Raporlar{% endblock %}
+
+{% block content %}
+<section id="reports-page">
+    <div class="page-header">
+        <h2>Raporlar</h2>
+    </div>
+    
+    <div class="reports-container">
+        <div class="report-filters">
+            <h3>Rapor Filtreleri</h3>
+            <div class="filter-group">
+                <label for="reportType">Rapor Türü:</label>
+                <select id="reportType">
+                    <option value="sales">Satış Raporu</option>
+                    <option value="customers">Müşteri Raporu</option>
+                    <option value="recognition">Tanıma Raporu</option>
+                </select>
+            </div>
+            
+            <div class="filter-group">
+                <label for="reportPeriod">Dönem:</label>
+                <select id="reportPeriod">
+                    <option value="today">Bugün</option>
+                    <option value="week">Bu Hafta</option>
+                    <option value="month">Bu Ay</option>
+                    <option value="custom">Özel Tarih</option>
+                </select>
+            </div>
+            
+            <button class="btn btn-primary" id="generateReportBtn">Rapor Oluştur</button>
+        </div>
+        
+        <div class="report-content" id="reportContent">
+            <p class="empty">Rapor oluşturmak için filtreler seçin</p>
+        </div>
+    </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='pages/reports.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - Yüz Tanıma Sistemi</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+</head>
+<body>
+    <div class="dashboard-container">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>Yüz Tanıma Admin</h2>
+                <button class="sidebar-toggle" id="sidebarToggle">☰</button>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="#" class="nav-item active" data-page="home">
+                    <span class="icon">🏠</span>
+                    <span class="label">Ana Sayfa</span>
+                </a>
+                <a href="#" class="nav-item" data-page="customers">
+                    <span class="icon">👥</span>
+                    <span class="label">Müşteriler</span>
+                </a>
+                <a href="#" class="nav-item" data-page="camera">
+                    <span class="icon">📷</span>
+                    <span class="label">Kamera</span>
+                </a>
+                <a href="#" class="nav-item" data-page="reports">
+                    <span class="icon">📊</span>
+                    <span class="label">Raporlar</span>
+                </a>
+                <a href="#" class="nav-item" data-page="settings">
+                    <span class="icon">⚙️</span>
+                    <span class="label">Ayarlar</span>
+                </a>
+            </nav>
+        </aside>
+
+        <main class="main-content">
+            <header class="topbar">
+                <div class="topbar-left">
+                    <h1 id="pageTitle">Ana Sayfa</h1>
+                </div>
+                <div class="topbar-right">
+                    <div class="user-menu">
+                        <span id="username">Admin</span>
+                        <button class="user-button" id="userMenuBtn">👤</button>
+                        <div class="dropdown-menu" id="userDropdown">
+                            <a href="#" id="profileLink">Profil</a>
+                            <a href="#" id="logoutLink">Çıkış Yap</a>
+                        </div>
+                    </div>
+                </div>
+            </header>
+
+            <div class="content">
+                <section id="home-page" class="page active">
+                    <div class="welcome-box">
+                        <h2>Hoşgeldiniz!</h2>
+                        <p>Yüz Tanıma Performans Sistemi Admin Paneline hoşgeldiniz.</p>
+                    </div>
+
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-value" id="totalCustomers">0</div>
+                            <div class="stat-label">Toplam Müşteri</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value" id="todayOrders">0</div>
+                            <div class="stat-label">Bugünkü Siparişler</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value" id="totalRevenue">$0</div>
+                            <div class="stat-label">Toplam Gelir</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value" id="cameraStatus">✓ Aktif</div>
+                            <div class="stat-label">Kamera Durumu</div>
+                        </div>
+                    </div>
+
+                    <div class="recent-customers">
+                        <h3>Son Müşteriler</h3>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>İsim</th>
+                                    <th>Son Giriş</th>
+                                    <th>Toplam Harcama</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recentCustomersTable">
+                                <tr>
+                                    <td colspan="3" class="empty">Müşteri yok</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <section id="customers-page" class="page">
+                    <div class="page-header">
+                        <h2>Müşteri Yönetimi</h2>
+                        <button class="btn btn-primary" id="addCustomerBtn">Yeni Müşteri Ekle</button>
+                    </div>
+                    <div class="customers-container" id="customersContainer">
+                    </div>
+                </section>
+
+                <section id="camera-page" class="page">
+                    <div class="page-header">
+                        <h2>Kamera Kontrolü</h2>
+                    </div>
+                    <div class="camera-container">
+                        <div class="video-feed">
+                            <img id="cameraFeed" src="/video_feed" alt="Kamera Akışı">
+                        </div>
+                        <div class="camera-controls">
+                            <label>Kamera Seçimi:</label>
+                            <input type="number" id="cameraIndex" min="0" max="5" value="0">
+                            <button class="btn btn-primary" id="changeCameraBtn">Kamerası Değiştir</button>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="reports-page" class="page">
+                    <div class="page-header">
+                        <h2>Raporlar</h2>
+                    </div>
+                    <div class="reports-container">
+                        <p>Raporlar sayfası geliştirilme aşamasındadır...</p>
+                    </div>
+                </section>
+
+                <section id="settings-page" class="page">
+                    <div class="page-header">
+                        <h2>Ayarlar</h2>
+                    </div>
+                    <div class="settings-container">
+                        <div class="setting-group">
+                            <h3>Hesap Ayarları</h3>
+                            <form id="settingsForm">
+                                <div class="form-group">
+                                    <label for="settingsUsername">Kullanıcı Adı:</label>
+                                    <input type="text" id="settingsUsername" disabled>
+                                </div>
+                                <div class="form-group">
+                                    <label for="settingsEmail">E-posta:</label>
+                                    <input type="email" id="settingsEmail" disabled>
+                                </div>
+                                <button type="button" class="btn btn-secondary" id="changePasswordBtn">Şifreyi Değiştir</button>
+                            </form>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <div class="alert alert-info" id="infoAlert"></div>
+    <div class="alert alert-error" id="errorAlert"></div>
+    <div class="alert alert-success" id="successAlert"></div>
+
+    <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
+</body>
+</html>

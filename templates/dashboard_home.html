@@ -1,0 +1,54 @@
+{% extends "dashboard_base.html" %}
+
+{% block title %}Ana Sayfa{% endblock %}
+{% block page_title %}Ana Sayfa{% endblock %}
+
+{% block content %}
+<section id="home-page">
+    <div class="welcome-box">
+        <h2>Hoşgeldiniz!</h2>
+        <p>Yüz Tanıma Performans Sistemi Admin Paneline hoşgeldiniz.</p>
+    </div>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-value" id="totalCustomers">0</div>
+            <div class="stat-label">Toplam Müşteri</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="todayOrders">0</div>
+            <div class="stat-label">Bugünkü Siparişler</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="totalRevenue">$0</div>
+            <div class="stat-label">Toplam Gelir</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="cameraStatus">✓ Aktif</div>
+            <div class="stat-label">Kamera Durumu</div>
+        </div>
+    </div>
+
+    <div class="recent-customers">
+        <h3>Son Müşteriler</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>İsim</th>
+                    <th>Son Giriş</th>
+                    <th style="text-align: end;">Toplam Harcama</th>
+                </tr>
+            </thead>
+            <tbody id="recentCustomersTable">
+                <tr>
+                    <td colspan="3" class="empty">Müşteri yok</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='pages/home.js') }}"></script>
+{% endblock %}
