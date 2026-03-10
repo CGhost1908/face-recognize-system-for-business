@@ -13,6 +13,7 @@
         <div class="settings-tabs">
             <button class="tab-button active" data-tab="account">Hesap Ayarları</button>
             <button class="tab-button" data-tab="security">Güvenlik</button>
+            <button class="tab-button" data-tab="camera">Kamera Ayarları</button>
             <button class="tab-button" data-tab="system">Sistem Ayarları</button>
         </div>
 
@@ -57,6 +58,32 @@
                 <div class="session-info">
                     <p>Tüm aktif oturumlarınızdan çıkış yapabilirsiniz</p>
                     <button class="btn btn-secondary" id="logoutAllBtn">Tüm Oturumlardan Çık</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Camera Settings Tab -->
+        <div class="tab-content" id="camera-tab">
+            <div class="setting-group">
+                <h3>Kamera Ekle</h3>
+                <form id="addCameraForm">
+                    <div class="form-group">
+                        <label for="camName">Kamera Adı:</label>
+                        <input type="text" id="camName" placeholder="Örn: Ana Giriş Kamerası" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="camValue">Kamera Değeri:</label>
+                        <input type="text" id="camValue" placeholder="0, 1, 2 veya rtsp://..." required>
+                        <small style="color:#666;">Yerel kamera için index (0, 1, 2...), RTSP için URL girin</small>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Kamera Ekle</button>
+                </form>
+            </div>
+
+            <div class="setting-group">
+                <h3>Kayıtlı Kameralar</h3>
+                <div id="cameraList">
+                    <p class="empty">Yükleniyor...</p>
                 </div>
             </div>
         </div>

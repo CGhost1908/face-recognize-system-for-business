@@ -948,6 +948,20 @@ tbody tr td:last-child {
     border: 1px solid #f5c6cb;
 }
 
+/* Camera Settings */
+.btn-sm {
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+#cameraList table {
+    width: 100%;
+}
+
+#cameraList tr.active-cam {
+    background-color: #e8f5e9;
+}
+
 .message-box.info {
     background: #d1ecf1;
     color: #0c5460;

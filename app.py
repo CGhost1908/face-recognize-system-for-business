@@ -20,7 +20,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-API_KEY = 'API_KEY' # OpenWeatherMap API Key
+API_KEY = 'a010c2f6d9268b3039ce95c457da11d6' # OpenWeatherMap API Key
 
 DB_PATH = "database.db"
 FRAME_WIDTH = 640
@@ -33,6 +33,8 @@ if not os.path.exists(DATASET_DIR):
 camera = None
 CAMERA_IDX = 0
 camera_lock = threading.Lock()
+CAMERA_RECONNECT_DELAY = 5
+CAMERA_READ_TIMEOUT = 10
 known_face_encodings = []
 known_face_names = []
 RECOGNITION_ENABLED = True
@@ -55,9 +57,9 @@ with open("label_encoders.pkl", "rb") as f:
     label_encoders = pickle.load(f)
 
 with open("scaler.pkl", "rb") as f:
-    scaler = pickle.load(f) 
-# --- VERİTABANI İNİSİYALİZASYONU ---
+    scaler = pickle.load(f)
 
+# --- VERİTABANI İNİSİYALİZASYONU ---
 def init_db():
     with sqlite3.connect(DB_PATH, check_same_thread=False) as conn:
         cursor = conn.cursor()
@@ -108,6 +110,15 @@ def init_db():
                 price INTEGER NOT NULL
             )
         ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS camera_settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cam_name TEXT NOT NULL,
+                cam_value TEXT NOT NULL,
+                is_active BOOLEAN DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+        ''')
         conn.commit()
         print("[INFO] Veritabanı hazır.")
 
@@ -115,19 +126,16 @@ def init_db():
 def get_db():
     conn = sqlite3.connect("database.db")
     conn.row_factory = sqlite3.Row
-    return conn 
+    return conn
 
 # --- AUTHENTICATION HELPERS ---
-
 def hash_password(password):
-    """Hash password with salt"""
     salt = secrets.token_hex(32)
     pwd_hash = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000)
     return salt + pwd_hash.hex()
 
 
 def verify_password(stored_hash, password):
-    """Verify password against hash"""
     try:
         salt = stored_hash[:64]
         stored_pwd = stored_hash[64:]
@@ -136,9 +144,7 @@ def verify_password(stored_hash, password):
     except:
         return False
 
-
 def login_required(f):
-    """Decorator to require admin login"""
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if 'admin_id' not in session:
@@ -146,9 +152,7 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-
 def get_admin_user(admin_id):
-    """Get admin user by ID"""
     try:
         db = get_db()
         admin = db.execute("SELECT * FROM admin_users WHERE id=?", (admin_id,)).fetchone()
@@ -157,9 +161,7 @@ def get_admin_user(admin_id):
     except:
         return None
 
-
 def create_reset_token(admin_id):
-    """Create password reset token"""
     token = secrets.token_urlsafe(32)
     expires_at = (datetime.now() + timedelta(hours=24)).strftime('%Y-%m-%d %H:%M:%S')
     db = get_db()
@@ -171,16 +173,14 @@ def create_reset_token(admin_id):
     db.close()
     return token
 
-
 def verify_reset_token(token):
-    """Verify password reset token"""
     db = get_db()
     row = db.execute(
         "SELECT * FROM password_reset_tokens WHERE token=? AND used=0 AND expires_at > datetime('now')",
         (token,)
     ).fetchone()
     db.close()
-    return dict(row) if row else None 
+    return dict(row) if row else None
 
 def train_model():
     print("[EĞİTİM] Veritabanı bağlanıyor...")
@@ -230,7 +230,7 @@ def train_model():
         load_known_faces()
     except Exception as e:
         print(f"[HATA] Eğitim sırasında bir hata oluştu: {e}")
-        traceback.print_exc() 
+        traceback.print_exc()
 
 @app.route('/api/login', methods=['POST'])
 def login():
@@ -239,14 +239,12 @@ def login():
     password = data.get('password', '')
     remember_me = data.get('remember_me', False)
 
-    # Validate input
     if not username or not password:
         return jsonify({
             'success': False,
             'message': 'Kullanıcı adı ve şifre gereklidir'
         }), 400
 
-    # Check credentials
     db = get_db()
     admin = db.execute(
         "SELECT * FROM admin_users WHERE username=? AND is_active=1",
@@ -260,7 +258,6 @@ def login():
             'message': 'Kullanıcı adı veya şifre yanlış'
         }), 401
 
-    # Update last login
     db = get_db()
     db.execute(
         "UPDATE admin_users SET last_login=? WHERE id=?",
@@ -269,7 +266,6 @@ def login():
     db.commit()
     db.close()
 
-    # Create session
     session['admin_id'] = admin['id']
     session['username'] = admin['username']
     session['email'] = admin['email']
@@ -288,12 +284,10 @@ def login():
         }
     }), 200
 
-
 @app.route('/api/logout', methods=['POST'])
 def logout():
     session.clear()
     return jsonify({'success': True, 'message': 'Çıkış yapıldı'}), 200
-
 
 @app.route('/api/forgot-password', methods=['POST'])
 def forgot_password():
@@ -306,7 +300,6 @@ def forgot_password():
             'message': 'E-posta adresi gereklidir'
         }), 400
 
-    # Find admin by email
     db = get_db()
     admin = db.execute(
         "SELECT * FROM admin_users WHERE email=?",
@@ -315,13 +308,11 @@ def forgot_password():
     db.close()
 
     if not admin:
-        # Don't reveal if email exists (security)
         return jsonify({
             'success': True,
             'message': 'Eğer bu e-posta kayıtlıysa, şifre sıfırla bağlantısı gönderilecektir'
         }), 200
 
-    # Create reset token
     token = create_reset_token(admin['id'])
     # TODO: Send email with reset link
     # reset_link = f"http://yourdomain.com/reset-password?token={token}"
@@ -331,7 +322,6 @@ def forgot_password():
         'success': True,
         'message': 'Eğer bu e-posta kayıtlıysa, şifre sıfırla bağlantısı gönderilecektir'
     }), 200
-
 
 @app.route('/api/user/profile', methods=['GET'])
 @login_required
@@ -348,36 +338,103 @@ def get_profile():
         'last_login': admin['last_login']
     }), 200
 
+@app.route('/api/camera_settings', methods=['GET'])
+@login_required
+def get_camera_settings():
+    db = get_db()
+    rows = db.execute("SELECT id, cam_name, cam_value, is_active, created_at FROM camera_settings ORDER BY created_at DESC").fetchall()
+    db.close()
+    cameras = []
+    for row in rows:
+        cameras.append({
+            'id': row['id'],
+            'cam_name': row['cam_name'],
+            'cam_value': row['cam_value'],
+            'is_active': bool(row['is_active']),
+            'created_at': row['created_at']
+        })
+    return jsonify({'cameras': cameras})
 
-@app.route("/api/cam_changed", methods=["POST"])
-def cam_changed():
-    global CAMERA_IDX
+@app.route('/api/camera_settings', methods=['POST'])
+@login_required
+def add_camera_setting():
     data = request.get_json()
-    if not data or 'cam_number' not in data:
-        return jsonify({"error": "Eksik veri"}), 400
+    cam_name = data.get('cam_name', '').strip()
+    cam_value = data.get('cam_value', '').strip()
+    if not cam_name or not cam_value:
+        return jsonify({'error': 'Kamera adı ve değeri gereklidir'}), 400
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute(
+        "INSERT INTO camera_settings (cam_name, cam_value, is_active, created_at) VALUES (?, ?, 0, ?)",
+        (cam_name, cam_value, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    )
+    db.commit()
+    cam_id = cursor.lastrowid
+    db.close()
+    return jsonify({
+        'status': 'success',
+        'message': f'"{cam_name}" kamerası eklendi',
+        'camera': {'id': cam_id, 'cam_name': cam_name, 'cam_value': cam_value, 'is_active': False}
+    }), 201
+
+@app.route('/api/camera_settings/<int:cam_id>/activate', methods=['POST'])
+@login_required
+def activate_camera(cam_id):
+    global CAMERA_IDX
+    db = get_db()
+    cam = db.execute("SELECT * FROM camera_settings WHERE id=?", (cam_id,)).fetchone()
+    if not cam:
+        db.close()
+        return jsonify({'error': 'Kamera bulunamadı'}), 404
+    db.execute("UPDATE camera_settings SET is_active=0")
+    db.execute("UPDATE camera_settings SET is_active=1 WHERE id=?", (cam_id,))
+    db.commit()
+    db.close()
+    cam_value = cam['cam_value']
     try:
-        if int(data['cam_number']) in range(0, 6):
-            new_cam_index = int(data['cam_number'])
+        cam_value = int(cam_value)
     except ValueError:
-        new_cam_index = data['cam_number']
-    
-    if new_cam_index == CAMERA_IDX:
-        return jsonify({"message": f"Kamera zaten {new_cam_index} olarak ayarlı"})
-    
-    CAMERA_IDX = new_cam_index
+        pass
+    CAMERA_IDX = cam_value
     start_camera()
-    return jsonify({"message": f"Kamera {CAMERA_IDX} olarak ayarlandı"}) 
+    return jsonify({'status': 'success', 'message': f'"{cam["cam_name"]}" aktif edildi'})
+
+@app.route('/api/camera_settings/<int:cam_id>', methods=['DELETE'])
+@login_required
+def delete_camera_setting(cam_id):
+    db = get_db()
+    cam = db.execute("SELECT * FROM camera_settings WHERE id=?", (cam_id,)).fetchone()
+    if not cam:
+        db.close()
+        return jsonify({'error': 'Kamera bulunamadı'}), 404
+    if cam['is_active']:
+        db.close()
+        return jsonify({'error': 'Aktif kamera silinemez. Önce başka bir kamerayı aktif edin.'}), 400
+    db.execute("DELETE FROM camera_settings WHERE id=?", (cam_id,))
+    db.commit()
+    db.close()
+    return jsonify({'status': 'success', 'message': f'"{cam["cam_name"]}" silindi'})
 
 # --- KAMERA BAŞLATMA ---
-
 def start_camera():
     global camera, CAMERA_IDX
     with camera_lock:
         if camera is not None:
-            camera.release()
+            try:
+                camera.release()
+            except:
+                pass
             print(f"[INFO] Önceki kamera ({CAMERA_IDX}) kapatıldı.")
         print(f"[INFO] Yeni kamera {CAMERA_IDX} başlatılıyor...")
-        camera = cv2.VideoCapture(CAMERA_IDX)
+        if isinstance(CAMERA_IDX, str):
+            os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;tcp|analyzeduration;5000000|probesize;5000000'
+            camera = cv2.VideoCapture(CAMERA_IDX, cv2.CAP_FFMPEG)
+            camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            camera.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 15000)
+            camera.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 15000)
+        else:
+            camera = cv2.VideoCapture(CAMERA_IDX)
         camera.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
         camera.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
         if not camera.isOpened():
@@ -429,23 +486,38 @@ def load_known_faces():
 
 def read_camera_loop():
     global latest_raw_frame, camera
-    if camera is None or not camera.isOpened():
-        print("[ERROR] Kamera başlatılmamış veya açılamadı!")
-        return
-
-    frame_skip = 2
-    counter = 0
+    consecutive_failures = 0
+    MAX_FAILURES = 30  # Bu kadar arka arkaya başarısız okumadan sonra yeniden bağlan
+    last_frame_time = time.time()
 
     while True:
-        counter += 1
-        ret, frame = camera.read()
-        if not ret:
-            print("[WARNING] Kameradan frame alınamadı (read_camera_loop).")
-            time.sleep(0.1)
+        # Kamera kontrolü
+        with camera_lock:
+            cam = camera
+        if cam is None or not cam.isOpened():
+            print("[WARNING] Kamera bağlı değil, yeniden bağlanmaya çalışılıyor...")
+            time.sleep(CAMERA_RECONNECT_DELAY)
+            start_camera()
+            consecutive_failures = 0
             continue
 
-        if counter % frame_skip == 0:
-            latest_raw_frame = frame
+        ret, frame = cam.read()
+
+        if not ret or frame is None:
+            consecutive_failures += 1
+            if consecutive_failures >= MAX_FAILURES:
+                elapsed = time.time() - last_frame_time
+                print(f"[WARNING] {consecutive_failures} ardışık başarısız okuma ({elapsed:.1f}s), kamera yeniden başlatılıyor...")
+                start_camera()
+                consecutive_failures = 0
+                last_frame_time = time.time()
+            time.sleep(0.05)
+            continue
+
+        # Başarılı okuma
+        consecutive_failures = 0
+        last_frame_time = time.time()
+        latest_raw_frame = frame
 
         time.sleep(0.02)
 
@@ -953,10 +1025,29 @@ def delete_product(product_id):
 def video_feed():
     return Response(generate_mjpeg_raw(), mimetype='multipart/x-mixed-replace; boundary=frame') 
 
+def load_active_camera():
+    global CAMERA_IDX
+    try:
+        db = get_db()
+        row = db.execute("SELECT cam_value FROM camera_settings WHERE is_active=1").fetchone()
+        db.close()
+        if row:
+            try:
+                CAMERA_IDX = int(row['cam_value'])
+            except ValueError:
+                CAMERA_IDX = row['cam_value']
+            print(f"[INFO] Veritabanından aktif kamera yüklendi: {CAMERA_IDX}")
+        else:
+            print("[INFO] Aktif kamera ayarı bulunamadı, varsayılan (0) kullanılıyor.")
+    except Exception as e:
+        print(f"[HATA] Kamera ayarı yüklenemedi: {e}")
+
+
 if __name__ == "__main__":
     init_db()
     train_model()
     load_known_faces()
+    load_active_camera()
     start_camera()
     t_camera = threading.Thread(target=read_camera_loop, daemon=True)
     t_camera.start()

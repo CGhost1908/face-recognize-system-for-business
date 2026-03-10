@@ -22,9 +22,10 @@
             <a class="menu-button" href="{{ url_for('customers') }}">Edit Customer</a>
             <a class="menu-button" href="{{ url_for('register') }}">Register Customer</a>
             <a class="menu-button" href="{{ url_for('customers') }}">Delete Customer</a>
+            <a class="menu-button" href="{{ url_for('settings_page', tab='camera') }}">Change Cam</a>
         </div>
         <button class="toggle-cam-mode" onclick="toggleCameraMode()">Show Cam</button>
-        <div class="cam-select">
+        <!-- <div class="cam-select">
             <div class="cam-radio-group">
                 <input type="radio" id="cam0" name="cam-select" value="0" onchange="camChanged(this.value)" checked>
                 <label for="cam0">0</label>
@@ -47,7 +48,7 @@
                 <input type="radio" id="camCustom" name="cam-select" value="6" onchange="camChanged(this.value)">
                 <label for="camCustom">IP</label>
             </div>
-        </div>
+        </div> -->
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=camera" />
         <!--
         -->
@@ -189,6 +190,7 @@
 
         </div>
         <!--
+        -->
         <div class="weather">
             <div class="weather-details">
                 <h1 class="location" style="margin-bottom:0px;"></h1>
@@ -196,7 +198,6 @@
                 <h1 class="temperature" style="margin-top:0px;">0°C</h1>
             </div>
         </div>
-        -->
     </div>
 </body>
 </html>

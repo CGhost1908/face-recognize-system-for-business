@@ -486,47 +486,6 @@ function suggestFood() {
     .catch(err => alert("Hata: " + err));
 }
 
-function camChanged(value){
-    if(value == "6"){
-        value = prompt("Lütfen kamera IP adresini girin:", "http://");
-        if(!value){
-            document.getElementById('cam0').click();
-            return;
-        }
-        localStorage.setItem('cam_number', value);
-        fetch('/api/cam_changed', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ cam_number: value })
-        })
-        .then(response => response.json())
-        .then(data => {
-            console.log(data.message);
-        })
-        .catch(error => {
-            console.error('Hata:', error);
-        });
-    }else{
-        localStorage.setItem('cam_number', value);
-        fetch('/api/cam_changed', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ cam_number: value })
-        })
-        .then(response => response.json())
-        .then(data => {
-            console.log(data.message);
-        })
-        .catch(error => {
-            console.error('Hata:', error);
-        });
-    }
-}
-
 function triggerRecognize(){
     fetch('/api/recognize', {
         method: 'POST',
@@ -609,35 +568,6 @@ function addRecognizedCustomerToLastCustomers(name, image, last_login_date){
 
 
 document.addEventListener("DOMContentLoaded", (event) => { 
-    let camValue = localStorage.getItem('cam_number');
-    if(camValue == 0 || camValue == 1 || camValue == 2 || camValue == 3 || camValue == 4 || camValue == 5){
-        console.log("set cam", camValue);
-        document.getElementById(`cam${localStorage.getItem('cam_number')}`).click();
-    }else if(!camValue){
-        console.log("no cam selected, set to 0");
-        document.getElementById(`cam0`).click();
-    }else{
-        console.log("ip cam entered", camValue);
-        fetch('/api/cam_changed', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ cam_number: camValue })
-        })
-        .then(response => response.json())
-        .then(data => {
-            console.log(data.message);
-        })
-        .catch(error => {
-            console.error('Hata:', error);
-        });
-        document.getElementById(`camCustom`).checked = true
-    }
-
-    // setupAutocomplete('food-input', 'food-results', foods);
-    // setupAutocomplete('drink-input', 'drink-results', drinks);
-
     getLastCustomersOnLoad();
     getProducts();
     listProducts();

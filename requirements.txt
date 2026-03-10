@@ -1,4 +1,5 @@
-# Raspberry Pi Requirements (Optimized)
+#setuptools==68.2.2
+
 MarkupSafe==2.1.5
 Flask==3.0.0
 opencv-contrib-python==4.13.0.92
@@ -6,10 +7,11 @@ numpy>=2.0.0
 Pillow>=10.0.0
 requests==2.31.0
 face-recognition
+face-recognition-models
+git+https://github.com/ageitgey/face_recognition_models
 tensorflow
-sklearn
 scikit-learn
-dlib==19.24.2  # Very slow to install on Pi, consider pre-built wheels\
+dlib  # Very slow to install on Pi, consider pre-built wheels\
 
 # Optional: TensorFlow-lite is lighter on Pi
 # tensorflow-lite-runtime  # Uncomment if using TensorFlow Lite
