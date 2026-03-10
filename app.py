@@ -49,8 +49,6 @@ last_recognized_lock = threading.Lock()
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = secrets.token_hex(32)
 
-recognizer = cv2.face.LBPHFaceRecognizer_create()
-recognizer.read('trainer/trainer.yml')
 model = load_model("trained_model.h5")
 
 with open("label_encoders.pkl", "rb") as f:
