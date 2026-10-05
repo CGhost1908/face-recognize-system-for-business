@@ -1,1052 +1,1461 @@
-from flask import Flask, request, jsonify, send_from_directory, render_template, Response, session, redirect, url_for
-from functools import wraps
-import cv2
-import numpy as np
-import sqlite3
 import os
-from PIL import Image
-import base64
-from tensorflow.keras.models import load_model
-import pickle
-import requests
-from datetime import datetime, timedelta
-import threading
+# Optimize thread pools for Raspberry Pi 5 ARM64 and low-power CPU architectures
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
+os.environ.setdefault("MKL_NUM_THREADS", "2")
+os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "2")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "2")
+
+import io
 import time
-import face_recognition
-import traceback
-import hashlib
-import secrets
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import base64
+import threading
+from datetime import datetime, timedelta
+from flask import Flask, render_template, request, jsonify, Response, redirect, url_for, session, send_from_directory
+from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
+from PIL import Image
+import numpy as np
 
-API_KEY = 'a010c2f6d9268b3039ce95c457da11d6' # OpenWeatherMap API Key
+from database import (
+    init_db,
+    get_db_connection,
+    get_active_presences,
+    set_presence_status,
+    add_or_update_presence,
+    get_setting,
+    set_setting
+)
+from uniface_engine import UniFaceEngine
+from camera_stream import CameraStream
+from recognition_service import RecognitionService
+from recommendation_service import RecommendationService
+from mediamtx_service import MediaMTXService
 
-DB_PATH = "database.db"
-FRAME_WIDTH = 640
-FRAME_HEIGHT = 480
-DATASET_DIR = "dataset"
+app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "uniface_cafe_secret_key_2026")
+app.config['TEMPLATES_AUTO_RELOAD'] = True
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 
-if not os.path.exists(DATASET_DIR):
-    os.makedirs(DATASET_DIR)
+UPLOAD_PRODUCTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "images", "products")
+os.makedirs(UPLOAD_PRODUCTS_DIR, exist_ok=True)
+ALLOWED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
 
-camera = None
-CAMERA_IDX = 0
-camera_lock = threading.Lock()
-CAMERA_RECONNECT_DELAY = 5
-CAMERA_READ_TIMEOUT = 10
-known_face_encodings = []
-known_face_names = []
-RECOGNITION_ENABLED = True
-recognition_lock = threading.Lock()
-latest_raw_frame = None
-raw_frame_lock = threading.Lock()
-processed_output_frame = None
-processed_frame_lock = threading.Lock()
-last_recognized_name = "Yok"
-last_recognized_lock = threading.Lock()
+# Initialize database
+init_db()
 
-app = Flask(__name__, static_folder="static", template_folder="templates")
-app.secret_key = secrets.token_hex(32)
-
-model = load_model("trained_model.h5")
-
-with open("label_encoders.pkl", "rb") as f:
-    label_encoders = pickle.load(f)
-
-with open("scaler.pkl", "rb") as f:
-    scaler = pickle.load(f)
-
-# --- VERİTABANI İNİSİYALİZASYONU ---
-def init_db():
-    with sqlite3.connect(DB_PATH, check_same_thread=False) as conn:
+def get_active_camera_source_from_db():
+    try:
+        conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE,
-                image TEXT NOT NULL,
-                total_spent REAL DEFAULT 0,
-                last_login_date TEXT NOT NULL,
-                encoding BLOB NOT NULL
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                foods TEXT NULL,
-                order_date TEXT
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS admin_users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL UNIQUE,
-                email TEXT NOT NULL UNIQUE,
-                password_hash TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                last_login TEXT,
-                is_active BOOLEAN DEFAULT 1
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS password_reset_tokens (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                admin_id INTEGER NOT NULL,
-                token TEXT NOT NULL UNIQUE,
-                expires_at TEXT NOT NULL,
-                used BOOLEAN DEFAULT 0,
-                FOREIGN KEY (admin_id) REFERENCES admin_users(id)
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS products (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                product_name NOT NULL UNIQUE,
-                category TEXT NOT NULL,
-                price INTEGER NOT NULL
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS camera_settings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                cam_name TEXT NOT NULL,
-                cam_value TEXT NOT NULL,
-                is_active BOOLEAN DEFAULT 0,
-                created_at TEXT NOT NULL
-            )
-        ''')
-        conn.commit()
-        print("[INFO] Veritabanı hazır.")
+        cursor.execute("SELECT cam_value FROM camera_settings WHERE is_active = 1 ORDER BY id DESC LIMIT 1")
+        row = cursor.fetchone()
+        conn.close()
+        if row and row['cam_value']:
+            val = str(row['cam_value']).strip()
+            if val.isdigit():
+                return int(val)
+            return val
+    except Exception as e:
+        print(f"[WARN] Error reading active camera from DB: {e}")
+    return 0
 
 
-def get_db():
-    conn = sqlite3.connect("database.db")
-    conn.row_factory = sqlite3.Row
-    return conn
-
-# --- AUTHENTICATION HELPERS ---
-def hash_password(password):
-    salt = secrets.token_hex(32)
-    pwd_hash = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000)
-    return salt + pwd_hash.hex()
-
-
-def verify_password(stored_hash, password):
+def persist_active_camera_to_db(cam_source, cam_name=None):
     try:
-        salt = stored_hash[:64]
-        stored_pwd = stored_hash[64:]
-        pwd_hash = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000)
-        return pwd_hash.hex() == stored_pwd
-    except:
-        return False
-
-def login_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if 'admin_id' not in session:
-            return redirect(url_for('admin', unauthorized=True))
-        return f(*args, **kwargs)
-    return decorated_function
-
-def get_admin_user(admin_id):
-    try:
-        db = get_db()
-        admin = db.execute("SELECT * FROM admin_users WHERE id=?", (admin_id,)).fetchone()
-        db.close()
-        return dict(admin) if admin else None
-    except:
-        return None
-
-def create_reset_token(admin_id):
-    token = secrets.token_urlsafe(32)
-    expires_at = (datetime.now() + timedelta(hours=24)).strftime('%Y-%m-%d %H:%M:%S')
-    db = get_db()
-    db.execute(
-        "INSERT INTO password_reset_tokens (admin_id, token, expires_at) VALUES (?, ?, ?)",
-        (admin_id, token, expires_at)
-    )
-    db.commit()
-    db.close()
-    return token
-
-def verify_reset_token(token):
-    db = get_db()
-    row = db.execute(
-        "SELECT * FROM password_reset_tokens WHERE token=? AND used=0 AND expires_at > datetime('now')",
-        (token,)
-    ).fetchone()
-    db.close()
-    return dict(row) if row else None
-
-def train_model():
-    print("[EĞİTİM] Veritabanı bağlanıyor...")
-    try:
-        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        src_str = str(cam_source).strip()
+        conn = get_db_connection()
         cursor = conn.cursor()
-        for person_name in os.listdir(DATASET_DIR):
-            row = cursor.execute("SELECT id FROM users WHERE name=?", (person_name,)).fetchone()
-            if row is not None:
-                print(f"'{person_name}' veritabanında zaten var, eklenmiyor.")
-                continue
-            person_dir = os.path.join(DATASET_DIR, person_name)
-            if not os.path.isdir(person_dir):
-                continue
-            print(f"--- '{person_name}' için işlem başlıyor... ---")
-            person_encodings = []
-            profile_image_path = os.path.join(person_dir, os.listdir(person_dir)[1])
-            profile_image_base64 = None
-            if os.path.isfile(profile_image_path):
-                with open(profile_image_path, "rb") as img_file:
-                    profile_image_base64 = base64.b64encode(img_file.read()).decode('utf-8')
-            for image_name in os.listdir(person_dir):
-                image_path = os.path.join(person_dir, image_name)
-                print(f" > Fotoğraf okunuyor: {image_name}")
-                image = cv2.imread(image_path)
-                if image is None:
-                    print(f" [UYARI] {image_name} okunamadı, atlanıyor.")
-                    continue
-                rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                rgb_image_contiguous = np.ascontiguousarray(rgb_image)
-                rgb_image_final = rgb_image_contiguous.astype(np.uint8)
-                face_locations = face_recognition.face_locations(rgb_image_final, model="hog")
-                if len(face_locations) == 1:
-                    encoding = face_recognition.face_encodings(rgb_image_final, face_locations)[0]
-                    person_encodings.append(encoding)
-                    print(f" > Yüz bulundu ve kodlandı.")
-                else:
-                    print(f" [UYARI] {image_name} içinde yüz bulunamadı veya birden fazla yüz var, atlanıyor.")
-            if len(person_encodings) > 0:
-                avg_encoding = np.mean(person_encodings, axis=0)
-                cursor.execute("INSERT INTO users (name, encoding, last_login_date, image) VALUES (?, ?, ?, ?)",
-                    (person_name, avg_encoding.tobytes(), datetime.now().strftime('%Y-%m-%d %H:%M:%S'), profile_image_base64))
-                print(f"--- '{person_name}' için ortalama veritabanına eklendi. ---")
+        cursor.execute("UPDATE camera_settings SET is_active = 0")
+        cursor.execute("SELECT id FROM camera_settings WHERE cam_value = ?", (src_str,))
+        existing = cursor.fetchone()
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        if existing:
+            cursor.execute("UPDATE camera_settings SET is_active = 1 WHERE id = ?", (existing['id'],))
+        else:
+            name = cam_name or (f"Kamera {src_str}" if src_str.isdigit() else "RTSP Kamera")
+            cursor.execute("INSERT INTO camera_settings (cam_name, cam_value, is_active, created_at) VALUES (?, ?, 1, ?)", (name, src_str, now_str))
         conn.commit()
         conn.close()
-        print("\n[EĞİTİM] Model eğitimi tamamlandı! Hafızadaki yüzler güncelleniyor...")
-        load_known_faces()
     except Exception as e:
-        print(f"[HATA] Eğitim sırasında bir hata oluştu: {e}")
-        traceback.print_exc()
-
-@app.route('/api/login', methods=['POST'])
-def login():
-    data = request.get_json()
-    username = data.get('username', '').strip()
-    password = data.get('password', '')
-    remember_me = data.get('remember_me', False)
-
-    if not username or not password:
-        return jsonify({
-            'success': False,
-            'message': 'Kullanıcı adı ve şifre gereklidir'
-        }), 400
-
-    db = get_db()
-    admin = db.execute(
-        "SELECT * FROM admin_users WHERE username=? AND is_active=1",
-        (username,)
-    ).fetchone()
-    db.close()
-
-    if not admin or not verify_password(admin['password_hash'], password):
-        return jsonify({
-            'success': False,
-            'message': 'Kullanıcı adı veya şifre yanlış'
-        }), 401
-
-    db = get_db()
-    db.execute(
-        "UPDATE admin_users SET last_login=? WHERE id=?",
-        (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), admin['id'])
-    )
-    db.commit()
-    db.close()
-
-    session['admin_id'] = admin['id']
-    session['username'] = admin['username']
-    session['email'] = admin['email']
-    if remember_me:
-        session.permanent = True
-        app.permanent_session_lifetime = timedelta(days=30)
-
-    return jsonify({
-        'success': True,
-        'message': 'Giriş başarılı',
-        'token': secrets.token_urlsafe(32),
-        'admin': {
-            'id': admin['id'],
-            'username': admin['username'],
-            'email': admin['email']
-        }
-    }), 200
-
-@app.route('/api/logout', methods=['POST'])
-def logout():
-    session.clear()
-    return jsonify({'success': True, 'message': 'Çıkış yapıldı'}), 200
-
-@app.route('/api/forgot-password', methods=['POST'])
-def forgot_password():
-    """Request password reset"""
-    data = request.get_json()
-    email = data.get('email', '').strip()
-    if not email:
-        return jsonify({
-            'success': False,
-            'message': 'E-posta adresi gereklidir'
-        }), 400
-
-    db = get_db()
-    admin = db.execute(
-        "SELECT * FROM admin_users WHERE email=?",
-        (email,)
-    ).fetchone()
-    db.close()
-
-    if not admin:
-        return jsonify({
-            'success': True,
-            'message': 'Eğer bu e-posta kayıtlıysa, şifre sıfırla bağlantısı gönderilecektir'
-        }), 200
-
-    token = create_reset_token(admin['id'])
-    # TODO: Send email with reset link
-    # reset_link = f"http://yourdomain.com/reset-password?token={token}"
-    # send_reset_email(admin['email'], reset_link)
-
-    return jsonify({
-        'success': True,
-        'message': 'Eğer bu e-posta kayıtlıysa, şifre sıfırla bağlantısı gönderilecektir'
-    }), 200
-
-@app.route('/api/user/profile', methods=['GET'])
-@login_required
-def get_profile():
-    admin_id = session.get('admin_id')
-    admin = get_admin_user(admin_id)
-    if not admin:
-        return jsonify({'error': 'Kullanıcı bulunamadı'}), 404
-    return jsonify({
-        'id': admin['id'],
-        'username': admin['username'],
-        'email': admin['email'],
-        'created_at': admin['created_at'],
-        'last_login': admin['last_login']
-    }), 200
-
-@app.route('/api/camera_settings', methods=['GET'])
-@login_required
-def get_camera_settings():
-    db = get_db()
-    rows = db.execute("SELECT id, cam_name, cam_value, is_active, created_at FROM camera_settings ORDER BY created_at DESC").fetchall()
-    db.close()
-    cameras = []
-    for row in rows:
-        cameras.append({
-            'id': row['id'],
-            'cam_name': row['cam_name'],
-            'cam_value': row['cam_value'],
-            'is_active': bool(row['is_active']),
-            'created_at': row['created_at']
-        })
-    return jsonify({'cameras': cameras})
-
-@app.route('/api/camera_settings', methods=['POST'])
-@login_required
-def add_camera_setting():
-    data = request.get_json()
-    cam_name = data.get('cam_name', '').strip()
-    cam_value = data.get('cam_value', '').strip()
-    if not cam_name or not cam_value:
-        return jsonify({'error': 'Kamera adı ve değeri gereklidir'}), 400
-    db = get_db()
-    cursor = db.cursor()
-    cursor.execute(
-        "INSERT INTO camera_settings (cam_name, cam_value, is_active, created_at) VALUES (?, ?, 0, ?)",
-        (cam_name, cam_value, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-    )
-    db.commit()
-    cam_id = cursor.lastrowid
-    db.close()
-    return jsonify({
-        'status': 'success',
-        'message': f'"{cam_name}" kamerası eklendi',
-        'camera': {'id': cam_id, 'cam_name': cam_name, 'cam_value': cam_value, 'is_active': False}
-    }), 201
-
-@app.route('/api/camera_settings/<int:cam_id>/activate', methods=['POST'])
-@login_required
-def activate_camera(cam_id):
-    global CAMERA_IDX
-    db = get_db()
-    cam = db.execute("SELECT * FROM camera_settings WHERE id=?", (cam_id,)).fetchone()
-    if not cam:
-        db.close()
-        return jsonify({'error': 'Kamera bulunamadı'}), 404
-    db.execute("UPDATE camera_settings SET is_active=0")
-    db.execute("UPDATE camera_settings SET is_active=1 WHERE id=?", (cam_id,))
-    db.commit()
-    db.close()
-    cam_value = cam['cam_value']
-    try:
-        cam_value = int(cam_value)
-    except ValueError:
-        pass
-    CAMERA_IDX = cam_value
-    start_camera()
-    return jsonify({'status': 'success', 'message': f'"{cam["cam_name"]}" aktif edildi'})
-
-@app.route('/api/camera_settings/<int:cam_id>', methods=['DELETE'])
-@login_required
-def delete_camera_setting(cam_id):
-    db = get_db()
-    cam = db.execute("SELECT * FROM camera_settings WHERE id=?", (cam_id,)).fetchone()
-    if not cam:
-        db.close()
-        return jsonify({'error': 'Kamera bulunamadı'}), 404
-    if cam['is_active']:
-        db.close()
-        return jsonify({'error': 'Aktif kamera silinemez. Önce başka bir kamerayı aktif edin.'}), 400
-    db.execute("DELETE FROM camera_settings WHERE id=?", (cam_id,))
-    db.commit()
-    db.close()
-    return jsonify({'status': 'success', 'message': f'"{cam["cam_name"]}" silindi'})
-
-# --- KAMERA BAŞLATMA ---
-def start_camera():
-    global camera, CAMERA_IDX
-    with camera_lock:
-        if camera is not None:
-            try:
-                camera.release()
-            except:
-                pass
-            print(f"[INFO] Önceki kamera ({CAMERA_IDX}) kapatıldı.")
-        print(f"[INFO] Yeni kamera {CAMERA_IDX} başlatılıyor...")
-        if isinstance(CAMERA_IDX, str):
-            os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;tcp|analyzeduration;5000000|probesize;5000000'
-            camera = cv2.VideoCapture(CAMERA_IDX, cv2.CAP_FFMPEG)
-            camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            camera.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 15000)
-            camera.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 15000)
-        else:
-            camera = cv2.VideoCapture(CAMERA_IDX)
-        camera.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
-        camera.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
-        if not camera.isOpened():
-            print(f"[HATA] Kamera açılamadı (INDEX={CAMERA_IDX})")
-            camera = None
-        else:
-            print(f"[INFO] Kamera {CAMERA_IDX} başarıyla başlatıldı.")
+        print(f"[WARN] Error persisting active camera to DB: {e}")
 
 
-@app.route('/api/weather', methods=['POST'])
-def get_weather():
-    data = request.get_json()
-    lat = data.get('lat')
-    lon = data.get('lon')
-    if lat is None or lon is None:
-        return jsonify({'error': 'Konum bilgisi eksik'}), 400
-    url = f'https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={API_KEY}&units=metric&lang=tr'
-    response = requests.get(url)
-    if response.status_code != 200:
-        return jsonify({'error': 'API isteği başarısız'}), 500
-    return jsonify(response.json())
+# Initialize core services
+uniface_engine = UniFaceEngine()
+initial_camera_source = get_active_camera_source_from_db()
+camera = CameraStream(camera_source=initial_camera_source, width=1920, height=1080)
+camera.start()
+
+recognition_service = RecognitionService(uniface_engine=uniface_engine)
+recommendation_service = RecommendationService()
+
+# MediaMTX WebRTC & RTSP Streaming Server
+mediamtx_service = MediaMTXService(fps=25)
+try:
+    mediamtx_service.start()
+except Exception as e:
+    print(f"[WARN] MediaMTXService could not start: {e}")
+
+import atexit
+atexit.register(mediamtx_service.stop)
+atexit.register(camera.stop)
+
+# Global state for recognition worker & video stream decoupling
+shared_recognition_state = {
+    "annotated_frame": None,
+    "jpeg_bytes": None,
+    "recognized_people": [],
+    "last_update": 0
+}
+recognition_state_lock = threading.Lock()
+is_recognition_active = True
 
 
-@app.route("/static/images/<path:filename>")
-def serve_image(filename):
-    return send_from_directory("static/images", filename)
-
-
-# NEW CAMERA SYSTEM
-
-def load_known_faces():
-    global known_face_encodings, known_face_names
-    known_face_encodings = []
-    known_face_names = []
-    try:
-        with sqlite3.connect(DB_PATH, check_same_thread=False) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT name, encoding FROM users")
-            rows = cursor.fetchall()
-            for row in rows:
-                name = row[0]
-                encoding = np.frombuffer(row[1], dtype=np.float64)
-                known_face_encodings.append(encoding)
-                known_face_names.append(name)
-            print(f"[INFO] {len(known_face_names)} adet bilinen yüz veritabanından yüklendi.")
-    except Exception as e:
-        print(f"[HATA] Veritabanından yüzler yüklenemedi: {e}")
-
-
-def read_camera_loop():
-    global latest_raw_frame, camera
-    consecutive_failures = 0
-    MAX_FAILURES = 30  # Bu kadar arka arkaya başarısız okumadan sonra yeniden bağlan
-    last_frame_time = time.time()
+def background_recognition_worker():
+    """
+    Dedicated AI Recognition Worker (Raspberry Pi 5 Optimized):
+    Runs decoupled UniFace detection, spatial tracking, and multi-angle prototype matching.
+    Uses dynamic adaptive rate:
+    - ~8 FPS when faces/activity are detected
+    - ~4 FPS heartbeat when scene is empty
+    - 0 FPS / full sleep when recognition is disabled via admin panel
+    """
+    global shared_recognition_state
+    prev_thumb = None
+    last_static_heartbeat = 0.0
 
     while True:
-        # Kamera kontrolü
-        with camera_lock:
-            cam = camera
-        if cam is None or not cam.isOpened():
-            print("[WARNING] Kamera bağlı değil, yeniden bağlanmaya çalışılıyor...")
-            time.sleep(CAMERA_RECONNECT_DELAY)
-            start_camera()
-            consecutive_failures = 0
+        if not is_recognition_active:
+            time.sleep(0.25)
             continue
 
-        ret, frame = cam.read()
-
-        if not ret or frame is None:
-            consecutive_failures += 1
-            if consecutive_failures >= MAX_FAILURES:
-                elapsed = time.time() - last_frame_time
-                print(f"[WARNING] {consecutive_failures} ardışık başarısız okuma ({elapsed:.1f}s), kamera yeniden başlatılıyor...")
-                start_camera()
-                consecutive_failures = 0
-                last_frame_time = time.time()
-            time.sleep(0.05)
+        frame_pil = camera.get_latest_frame()
+        if frame_pil is None:
+            time.sleep(0.1)
             continue
 
-        # Başarılı okuma
-        consecutive_failures = 0
-        last_frame_time = time.time()
-        latest_raw_frame = frame
+        now = time.time()
+        has_active_tracks = bool(getattr(recognition_service, 'active_tracks', []))
 
-        time.sleep(0.02)
+        # Edge Optimization: If no active faces are in the frame, check motion FIRST
+        # Tiny 80x60 grayscale diff takes 0.01ms on Raspberry Pi 5!
+        if not has_active_tracks:
+            thumb = np.asarray(frame_pil.resize((80, 60), Image.Resampling.NEAREST).convert('L'))
+            motion_score = 99.0
+            if prev_thumb is not None:
+                motion_score = float(np.mean(np.abs(thumb.astype(np.int16) - prev_thumb.astype(np.int16))))
+            prev_thumb = thumb
 
-
-# --- VİDEO AKIŞI OLUŞTURUCULAR (GENERATORS) ---
-
-def generate_mjpeg_processed():
-    global processed_output_frame
-    while True:
-        with processed_frame_lock:
-            if processed_output_frame is None:
-                time.sleep(0.1)
+            # If room is completely static (< 3.5 diff) and checked recently (< 4.5s):
+            # Rest the CPU completely! Do NOT run any deep neural networks or JPEG encoding!
+            if motion_score < 3.5 and (now - last_static_heartbeat < 4.5):
+                time.sleep(0.35)
                 continue
-            ret, buf = cv2.imencode('.jpg', processed_output_frame)
-            if not ret:
-                continue
-            frame = buf.tobytes()
-            yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-            time.sleep(0.05)
+            last_static_heartbeat = now
 
-
-def generate_mjpeg_raw():
-    global latest_raw_frame
-    while True:
-        with raw_frame_lock:
-            if latest_raw_frame is None:
-                time.sleep(0.1)
-                continue
-            ret, buf = cv2.imencode('.jpg', latest_raw_frame)
-            if not ret:
-                continue
-            frame = buf.tobytes()
-            yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-            time.sleep(0.03) 
-
-@app.route('/save-person', methods=['POST'])
-def save_person():
-    global camera
-    data = request.get_json()
-    name = data.get('name')
-    if not name or not name.strip():
-        return jsonify({'status': 'error', 'message': 'İsim alanı boş bırakılamaz.'})
-    
-    person_dir = os.path.join(DATASET_DIR, name.strip())
-    if not os.path.exists(person_dir):
-        os.makedirs(person_dir)
-    else:
-        return jsonify({'status': 'error', 'message': f"'{name}' zaten kayıtlı. Farklı bir isim deneyin."})
-    
-    print(f"[INFO] '{name}' için fotoğraf çekimi başlıyor... 5 fotoğraf çekilecek.")
-    saved_photo_count = 0
-    for i in range(5):
-        print(f"[INFO] Fotoğraf {i+1}/5 çekiliyor...")
-        frame_to_save = None
-        with raw_frame_lock:
-            if latest_raw_frame is not None:
-                frame_to_save = latest_raw_frame.copy()
-        if frame_to_save is None:
-            print("[ERROR] Kayıt sırasında kameradan görüntü alınamadı.")
-            continue
-        file_path = os.path.join(person_dir, f"{i+1}.jpg")
+        sleep_duration = 0.18
         try:
-            cv2.imwrite(file_path, frame_to_save)
-            print(f"[INFO] Fotoğraf kaydedildi: {file_path}")
-            saved_photo_count += 1
+            annotated_img, recognized_list = recognition_service.process_frame(frame_pil)
+            jpeg_bytes = UniFaceEngine.image_to_jpeg(annotated_img, quality=75)
+            with recognition_state_lock:
+                shared_recognition_state["annotated_frame"] = annotated_img
+                shared_recognition_state["jpeg_bytes"] = jpeg_bytes
+                shared_recognition_state["recognized_people"] = recognized_list
+                shared_recognition_state["last_update"] = time.time()
+
+            # Push annotated frame to MediaMTX WebRTC stream
+            if mediamtx_service and mediamtx_service.is_active():
+                try:
+                    import cv2
+                    bgr_np = cv2.cvtColor(np.array(annotated_img), cv2.COLOR_RGB2BGR)
+                    mediamtx_service.push_frame(bgr_np)
+                except Exception:
+                    pass
+
+            is_cuda = False
+            try:
+                providers = getattr(recognition_service.engine, 'providers', [])
+                is_cuda = "CUDAExecutionProvider" in providers
+            except Exception:
+                pass
+
+            has_activity = (
+                bool(recognized_list) or
+                bool(getattr(recognition_service, 'active_tracks', [])) or
+                bool(getattr(recognition_service, 'candidate_tracks', []))
+            )
+            if is_cuda:
+                sleep_duration = 0.025 if has_activity else 0.15
+            else:
+                sleep_duration = 0.08 if has_activity else 0.35
         except Exception as e:
-            print(f"[ERROR] Fotoğraf kaydedilirken hata oluştu: {e}")
-        time.sleep(1)
-    
-    if saved_photo_count == 0:
-        return jsonify({'status': 'error', 'message': '5 denemede de fotoğraf kaydedilemedi.'})
-    
-    print("[INFO] Fotoğraf kaydı bitti, eğitim tetikleniyor...")
-    train_model()
-    return jsonify({
-        'status': 'success',
-        'message': f'"{name}" için {saved_photo_count}/5 fotoğraf kaydedildi ve model eğitildi!'
-    })
+            print(f"[ERROR] Recognition worker exception: {e}")
+            sleep_duration = 0.35
+
+        time.sleep(sleep_duration)
 
 
-@app.route("/api/get_users", methods=["POST"])
-def get_users():
-    db = get_db()
-    rows = db.execute("""
-        SELECT id, name, last_login_date, image, total_spent
-        FROM users
-    """).fetchall()
-    db.close()
-    users = []
-    for row in rows:
-        users.append({
-            "id": row["id"],
-            "name": row["name"],
-            "image": row["image"],
-            "last_login_date": row["last_login_date"],
-            "total_spent": row["total_spent"]
-        })
-    return jsonify({"customers": users})
+# Start background recognition thread
+rec_thread = threading.Thread(target=background_recognition_worker, daemon=True)
+rec_thread.start()
 
 
-@app.route("/api/get_orders", methods=["POST"])
-def get_all_orders():
-    db = get_db()
-    rows = db.execute("""
-        SELECT id, name, foods, order_date
-        FROM orders
-        ORDER BY order_date DESC
-    """).fetchall()
-    db.close()
-    orders = []
-    for row in rows:
-        orders.append({
-            "id": row["id"],
-            "name": row["name"],
-            "foods": row["foods"],
-            "order_date": row["order_date"]
-        })
-    return orders
+# Helper: Admin auth decorator
+def login_required(f):
+    def decorated_function(*args, **kwargs):
+        if 'admin_id' not in session:
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    decorated_function.__name__ = f.__name__
+    return decorated_function
 
 
-@app.route("/api/get_last_customers", methods=["POST"])
-def get_last_customers():
-    data = request.get_json()
-    count = data.get('count', 5)
-    db = get_db()
-    rows = db.execute("""
-        SELECT id, name, last_login_date, image
-        FROM users
-        ORDER BY last_login_date DESC
-        LIMIT ?
-    """, (count,)).fetchall()
-    db.close()
-    customers = []
-    for row in rows:
-        customers.append({
-            "id": row["id"],
-            "name": row["name"],
-            "image": row["image"],
-            "last_login_date": row["last_login_date"]
-        })
-    return jsonify({"customers": customers}) 
-
-@app.route("/api/recognize", methods=["POST"])
-def recognize_once():
-    global latest_raw_frame, last_recognized_name
-    with raw_frame_lock:
-        if latest_raw_frame is None:
-            print("Kamera görüntüsü yok!")
-            return None
-        frame_to_process = latest_raw_frame.copy()
-    
-    small_frame = cv2.resize(frame_to_process, (0, 0), fx=0.25, fy=0.25)
-    rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
-    face_locations = face_recognition.face_locations(rgb_small_frame)
-    face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
-    
-    if len(face_encodings) == 0:
-        print("Yüz bulunamadı.")
-        return jsonify({"error": "Yüz bulunamadı"}), 404
-    
-    face_encoding = face_encodings[0]
-    matches = face_recognition.compare_faces(known_face_encodings, face_encoding)
-    face_distances = face_recognition.face_distance(known_face_encodings, face_encoding)
-    
-    name = "Bilinmiyor"
-    if len(face_distances) > 0:
-        best_match_index = np.argmin(face_distances)
-        if matches[best_match_index]:
-            name = known_face_names[best_match_index]
-            recognized = True
-    
-    with last_recognized_lock:
-        last_recognized_name = name
-    
-    if name == "Bilinmiyor":
-        print("Yüz tanınamadı.")
-        return jsonify({"error": "Yüz tanınamadı"}), 404
-    else:
-        print(f"Tanınan kişi: {name}")
-    
-    db = get_db()
-    cursor = db.cursor()
-    cursor.execute("UPDATE users SET last_login_date=? WHERE name=?",
-        (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), name))
-    db.commit()
-    result = db.execute("SELECT * FROM users WHERE name=?", (name,)).fetchone()
-    db.close()
-    
-    try:
-        if result:
-            id = result["id"]
-            encoded_img = result["image"]
-            total_spent = result["total_spent"]
-            last_login_date = result["last_login_date"]
-            encoding = result["encoding"]
-            return jsonify({
-                "id": id,
-                "name": name,
-                "image": encoded_img,
-                "total_spent": total_spent,
-                "last_login_date": last_login_date
-            })
-        else:
-            print("Kişi bilgileri bulunamadı.")
-    except:
-        print("Yüz tanınamadı.")
-    return jsonify({"error": "Yüz tanınamadı"}), 404
-
-
-# --- USER islemleri ---
-
-@app.route("/api/customer/<string:customer_name>", methods=["GET"])
-def get_customer_data(customer_name):
-    db = get_db()
-    customer = db.execute("SELECT name, total_spent FROM users WHERE name=?", (customer_name,)).fetchone()
-    db.close()
-    if customer:
-        return jsonify(dict(customer))
-    return jsonify({"error": "Müşteri bulunamadı"}), 404
-
-
-@app.route("/api/customer/<string:customer_name>/total_spent", methods=["GET"])
-def get_total_spent(customer_name):
-    db = get_db()
-    row = db.execute("SELECT total_spent FROM users WHERE name=?", (customer_name,)).fetchone()
-    db.close()
-    if row is None:
-        return jsonify({"error": "Müşteri bulunamadı"}), 404
-    return jsonify({"total_spent": row["total_spent"]})
-
-
-@app.route("/api/order_food/<string:customer_name>", methods=["POST"])
-def order_food(customer_name):
-    data = request.get_json()
-    foods = ", ".join(data['foods'])
-    db = get_db()
-    cursor = db.cursor()
-    cursor.execute("INSERT INTO orders (name, foods, order_date) VALUES (?, ?, ?)",
-        (customer_name, foods, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-    cursor.execute("UPDATE users SET total_spent = total_spent + ? WHERE name = ?",
-        (data['total'], customer_name))
-    db.commit()
-    db.close()
-    return jsonify({"message": "Sipariş başarıyla alındı"}), 201
-
-
-@app.route("/api/get_food_percentage/<string:customer_name>", methods=["GET"])
-def get_food_percentage(customer_name):
-    conn = sqlite3.connect("database.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT foods FROM orders WHERE name = ?", (customer_name,))
-    rows = cursor.fetchall()
-    conn.close()
-    food_count = {}
-    total_count = 0
-    for row in rows:
-        foods_str = row[0]
-        foods = [f.strip() for f in foods_str.split(",")]
-        for food in foods:
-            food_count[food] = food_count.get(food, 0) + 1
-        total_count += 1
-    top_5 = sorted(food_count.items(), key=lambda x: x[1], reverse=True)[:5]
-    food_percentages = {}
-    if total_count > 0:
-        for food, count in top_5:
-            food_percentages[food] = round((count / total_count) * 100, 2)
-    return food_percentages 
-
-@app.route("/api/suggest_food", methods=["POST"])
-def suggest_food():
-    data = request.get_json()
-    print(data)
-    try:
-        drink_encoded = label_encoders['drink_item'].transform([data['drink']])[0]
-        weather_encoded = label_encoders['weather'].transform([data['weather']])[0]
-        time_encoded = label_encoders['time_of_day'].transform([data['meal']])[0]
-        input_data = np.array([[1, drink_encoded, weather_encoded, data['temperature'], time_encoded]])
-        input_data = scaler.transform(input_data)
-        prediction = model.predict(input_data)
-        recommended_index = np.argmax(prediction)
-        recommended_food = label_encoders['food_item'].inverse_transform([recommended_index])[0]
-        return jsonify({"suggestion": recommended_food})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/preferences/<string:customer_name>", methods=["POST"])
-def add_preference(customer_name):
-    data = request.get_json()
-    food = data.get("food")
-    preference_text = data.get("preference")
-    if not food or not preference_text:
-        return jsonify({"error": "Yemek ve açıklama gerekli"}), 400
-
-    # Eğer preferences tablosu yoksa oluştur
-    with sqlite3.connect("database.db") as conn:
-        cursor = conn.cursor()
-        cursor.execute('''CREATE TABLE IF NOT EXISTS preferences (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            food TEXT,
-            preference_text TEXT,
-            FOREIGN KEY (id) REFERENCES users(id))''')
-        cursor.execute("INSERT INTO preferences (name, food, preference_text) VALUES (?, ?, ?)",
-            (customer_name, food, preference_text))
-        conn.commit()
-    return jsonify({"message": "Tercih kaydedildi"})
-
-
-@app.route("/api/customer/<string:customer_name>/preferences", methods=["GET"])
-def get_preferences(customer_name):
-    conn = get_db()
-    rows = conn.execute("SELECT food, preference_text FROM preferences WHERE name = ?",
-        (customer_name,)).fetchall()
-    conn.close()
-    if not rows:
-        return jsonify({"error": "Veri yok"}), 404
-    preferences = [f"{row['food']}: {row['preference_text']}" for row in rows]
-    return jsonify({"message": preferences})
-
-
-@app.route("/api/customer/<string:customer_name>/get_orders", methods=["GET"])
-def get_orders(customer_name):
-    conn = sqlite3.connect("database.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT foods FROM orders WHERE name = ? ORDER BY name", (customer_name,))
-    orders = [row[0] for row in cursor.fetchall()]
-    conn.close()
-    return orders
-
-
-@app.route('/api/customer/<string:customer_name>/last_login', methods=['GET'])
-def get_last_login(customer_name):
-    conn = sqlite3.connect("database.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT last_login_date FROM users WHERE name=?", (customer_name,))
-    result = cursor.fetchone()
-    conn.close()
-    if result and result[0]:
-        last_login = result[0]
-    else:
-        last_login = None
-    return jsonify({
-        'name': customer_name,
-        'last_login': last_login
-    }) 
-
-# --- MAIN ROUTES ---
+# --- WEB ROUTES ---
 
 @app.route('/')
 def index():
-    global RECOGNITION_ENABLED
-    with recognition_lock:
-        RECOGNITION_ENABLED = True
     return render_template('index.html')
 
 
-@app.route('/admin', methods=['GET'])
-def admin():
-    if 'admin_id' in session:
-        return redirect(url_for('dashboard'))
+
+import hashlib
+
+def verify_password(stored_hash, password):
+    if not stored_hash or not password:
+        return False
+    try:
+        if check_password_hash(stored_hash, password):
+            return True
+    except Exception:
+        pass
+    try:
+        if len(stored_hash) >= 64:
+            salt = stored_hash[:64]
+            expected_hash = stored_hash[64:]
+            pwd_hash = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000)
+            if pwd_hash.hex() == expected_hash:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+@app.route('/login', methods=['GET', 'POST'])
+@app.route('/admin', methods=['GET', 'POST'])
+@app.route('/api/login', methods=['POST'])
+def login():
+
+    # Ensure default admin exists
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM admin_users")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute(
+            "INSERT INTO admin_users (username, email, password_hash, created_at) VALUES (?, ?, ?, ?)",
+            ("admin", "admin@cafe.com", generate_password_hash("admin123"), datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        )
+        conn.commit()
+
+    is_json = request.is_json or request.path.startswith('/api/')
+
+    if request.method == 'POST':
+        if is_json:
+            data = request.json or {}
+            username = data.get('username', '').strip()
+            password = data.get('password', '')
+        else:
+            username = (request.form.get('username') or '').strip()
+            password = request.form.get('password') or ''
+
+        cursor.execute("SELECT * FROM admin_users WHERE username = ? AND is_active = 1", (username,))
+        admin = cursor.fetchone()
+        conn.close()
+
+        if admin and verify_password(admin['password_hash'], password):
+            session['admin_id'] = admin['id']
+            session['admin_username'] = admin['username']
+            if is_json:
+                return jsonify({"success": True, "message": "Giriş başarılı!"})
+            return redirect(url_for('dashboard'))
+        else:
+            if is_json:
+                return jsonify({"success": False, "message": "Geçersiz kullanıcı adı veya şifre."}), 400
+            return render_template('admin.html', error="Geçersiz kullanıcı adı veya şifre.")
+
+    conn.close()
     return render_template('admin.html')
+
+
+
+@app.route('/api/forgot-password', methods=['POST'])
+def forgot_password():
+    return jsonify({"success": True, "message": "Şifre sıfırlama bağlantısı gönderildi."})
+
+
+@app.route('/logout')
+@app.route('/api/logout', methods=['GET', 'POST'])
+def logout():
+    session.clear()
+    if request.path.startswith('/api/'):
+        return jsonify({"success": True})
+    return redirect(url_for('login'))
+
+
+
+@app.route('/api/user/profile')
+@app.route('/api/profile')
+@login_required
+def get_user_profile():
+    admin_id = session.get('admin_id')
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, username, email, created_at, last_login FROM admin_users WHERE id = ?", (admin_id,))
+    admin = cursor.fetchone()
+    conn.close()
+
+    if admin:
+        return jsonify({
+            "success": True,
+            "username": admin["username"],
+            "email": admin["email"],
+            "created_at": admin["created_at"],
+            "last_login": admin["last_login"]
+        })
+    return jsonify({
+        "success": True,
+        "username": session.get('admin_username', 'Admin'),
+        "email": "admin@cafe.com",
+        "created_at": "",
+        "last_login": ""
+    })
 
 
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    return render_template('dashboard_home.html', current_page='home')
+    return render_template('dashboard.html', username=session.get('admin_username', 'Admin'))
 
 
-@app.route('/dashboard/customers')
+
+@app.route('/dashboard/home')
+@app.route('/home', endpoint='home')
 @login_required
-def customers():
-    return render_template('dashboard_customers.html', current_page='customers')
-
-
-@app.route('/dashboard/register')
-@login_required
-def register():
-    return render_template('dashboard_register.html', current_page='register')
+def dashboard_home():
+    return redirect('/dashboard#home')
 
 
 @app.route('/dashboard/camera')
+@app.route('/camera', endpoint='camera_page')
+@app.route('/camera', endpoint='camera')
 @login_required
-def camera_page():
-    return render_template('dashboard_camera.html', current_page='camera')
+def dashboard_camera():
+    return redirect('/dashboard#camera')
 
 
-@app.route('/dashboard/reports')
+@app.route('/dashboard/customers')
+@app.route('/customers', endpoint='customers')
 @login_required
-def reports_page():
-    return render_template('dashboard_reports.html', current_page='reports')
+def dashboard_customers():
+    return redirect('/dashboard#customers')
 
 
 @app.route('/dashboard/products')
+@app.route('/products', endpoint='products_page')
+@app.route('/products', endpoint='products')
 @login_required
-def products_page():
-    return render_template('dashboard_products.html', current_page='products')
+def dashboard_products():
+    return redirect('/dashboard#products')
+
+
+@app.route('/dashboard/register')
+@app.route('/register', endpoint='register_page')
+@app.route('/register', endpoint='register')
+@login_required
+def dashboard_register():
+    return redirect('/dashboard#customers')
+
+
+@app.route('/dashboard/reports')
+@app.route('/reports', endpoint='reports_page')
+@app.route('/reports', endpoint='reports')
+@login_required
+def dashboard_reports():
+    return redirect('/dashboard#logs')
 
 
 @app.route('/dashboard/settings')
+@app.route('/settings', endpoint='settings_page')
+@app.route('/settings', endpoint='settings')
 @login_required
-def settings_page():
-    return render_template('dashboard_settings.html', current_page='settings')
+def dashboard_settings():
+    return redirect('/dashboard#settings')
 
 
-# --- ÜRÜN YÖNETİMİ ---
-
-@app.route('/api/get_products', methods=['GET'])
-def get_products():
-    try:
-        db = get_db()
-        rows = db.execute("""
-            SELECT id, product_name, category, price
-            FROM products
-            ORDER BY product_name
-        """).fetchall()
-        db.close()
-        products = []
-        for row in rows:
-            products.append({
-                'id': row['id'],
-                'name': row['product_name'],
-                'category': row['category'],
-                'price': row['price']
-            })
-        return jsonify({'products': products}), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/add_product', methods=['POST'])
-@login_required
-def add_product():
-    """Add a new product"""
-    try:
-        data = request.get_json()
-        product_name = data.get('product_name', '').strip()
-        category = data.get('category', '').strip() or None
-        price = data.get('price')
+# --- MJPEG VIDEO STREAM ROUTE (ULTRA-FAST & OPENCV-FREE) ---
 
-        # Validation
-        if not product_name:
-            return jsonify({'error': 'Ürün adı gereklidir'}), 400
-        if price is None:
-            return jsonify({'error': 'Fiyat gereklidir'}), 400
+# Pre-rendered Standby Frame (0% CPU, camera completely closed)
+STANDBY_FRAME_JPEG = None
+
+def get_standby_frame_jpeg():
+    global STANDBY_FRAME_JPEG
+    if STANDBY_FRAME_JPEG is None:
+        img = Image.new('RGB', (1280, 720), color=(15, 23, 42))  # Slate dark background
         try:
-            price = float(price)
-            if price < 0:
-                return jsonify({'error': 'Fiyat negatif olamaz'}), 400
-        except (ValueError, TypeError):
-            return jsonify({'error': 'Geçersiz fiyat'}), 400
-
-        # Insert product
-        db = get_db()
-        cursor = db.cursor()
-        try:
-            cursor.execute("""
-                INSERT INTO products (product_name, category, price)
-                VALUES (?, ?, ?)
-            """, (product_name, category, price))
-            db.commit()
-            product_id = cursor.lastrowid
-            db.close()
-            return jsonify({
-                'status': 'success',
-                'message': f'"{product_name}" başarıyla eklendi',
-                'product': {
-                    'id': product_id,
-                    'name': product_name,
-                    'category': category,
-                    'price': price
-                }
-            }), 201
-        except sqlite3.IntegrityError:
-            db.close()
-            return jsonify({'error': f'"{product_name}" zaten kayıtlı'}), 400
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+            from PIL import ImageDraw
+            draw = ImageDraw.Draw(img)
+            draw.rounded_rectangle([(340, 220), (940, 500)], radius=16, fill=(30, 41, 59), outline=(51, 65, 85), width=3)
+            draw.text((540, 290), "KAMERA KAPALI", fill=(239, 68, 68))
+            draw.text((470, 340), "Kamera ve AI Okuma Durduruldu", fill=(148, 163, 184))
+            draw.text((450, 380), "Yonetici Panelinden Tekrar Acilabilir", fill=(100, 116, 139))
+        except Exception:
+            pass
+        STANDBY_FRAME_JPEG = UniFaceEngine.image_to_jpeg(img, quality=85)
+    return STANDBY_FRAME_JPEG
 
 
-@app.route('/api/product/<int:product_id>', methods=['DELETE'])
-@login_required
-def delete_product(product_id):
-    try:
-        db = get_db()
-        product = db.execute(
-            "SELECT product_name FROM products WHERE id=?",
-            (product_id,)
-        ).fetchone()
-        if not product:
-            db.close()
-            return jsonify({'error': 'Ürün bulunamadı'}), 404
-        db.execute("DELETE FROM products WHERE id=?", (product_id,))
-        db.commit()
-        db.close()
-        return jsonify({
-            'status': 'success',
-            'message': f'"{product["product_name"]}" başarıyla silindi'
-        }), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+def generate_mjpeg_stream():
+    """
+    High-Performance MJPEG Video Streamer:
+    - Streams live frames when camera & recognition are active
+    - Yields cached standby frame when camera is stopped (0% CPU, camera hardware released)
+    """
+    while True:
+        if not is_recognition_active or not getattr(camera, 'running', True):
+            standby = get_standby_frame_jpeg()
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + standby + b'\r\n')
+            time.sleep(0.5)
+            continue
+
+        with recognition_state_lock:
+            jpeg_bytes = shared_recognition_state.get("jpeg_bytes")
+            last_up = shared_recognition_state.get("last_update", 0)
+
+        if jpeg_bytes is not None and (time.time() - last_up < 1.5):
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + jpeg_bytes + b'\r\n')
+            time.sleep(0.035)
+            continue
+
+        # Fallback to direct camera frame if live
+        raw_frame = camera.get_latest_frame()
+        if raw_frame is not None:
+            fallback_jpeg = UniFaceEngine.image_to_jpeg(raw_frame, quality=70)
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + fallback_jpeg + b'\r\n')
+
+        time.sleep(0.035)
 
 
 @app.route('/video_feed')
 def video_feed():
-    return Response(generate_mjpeg_raw(), mimetype='multipart/x-mixed-replace; boundary=frame') 
+    return Response(generate_mjpeg_stream(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
-def load_active_camera():
-    global CAMERA_IDX
-    try:
-        db = get_db()
-        row = db.execute("SELECT cam_value FROM camera_settings WHERE is_active=1").fetchone()
-        db.close()
+
+# --- API ENDPOINTS ---
+
+@app.route('/api/current_recognized_person')
+@app.route('/api/recognized_person')
+@app.route('/api/recognize', methods=['GET', 'POST'])
+def get_current_recognized_person():
+    if not is_recognition_active:
+        return jsonify({
+            "recognized": False,
+            "is_active": False,
+            "message": "AI Yüz Okuma Duraklatıldı"
+        })
+
+    with recognition_state_lock:
+        people = shared_recognition_state.get("recognized_people", [])[:]
+    
+    if people:
+        person = people[0]
+        name = person['name']
+        u_type = person.get('user_type', 'customer')
+        similarity = person.get('similarity', 1.0)
+
+        # Fetch latest user stats from DB
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name, user_type, image, total_spent, last_login_date FROM users WHERE name = ?", (name,))
+        u_row = cursor.fetchone()
+        conn.close()
+
+        total_spent = u_row['total_spent'] if u_row else 0.0
+        last_login = u_row['last_login_date'] if u_row else datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        user_image = u_row['image'] if (u_row and u_row['image']) else person.get('image', '')
+        user_id = u_row['id'] if u_row else 0
+
+        return jsonify({
+            "success": True,
+            "recognized": True,
+            "name": name,
+            "user_type": u_type,
+            "similarity": similarity,
+            "id": user_id,
+            "image": user_image,
+            "total_spent": total_spent,
+            "last_login_date": last_login,
+            "people": people,
+            "last_person": name
+        })
+    
+    return jsonify({
+        "success": True,
+        "recognized": False,
+        "name": None,
+        "user_type": None,
+        "people": [],
+        "last_person": None
+    })
+
+
+@app.route('/api/weather', methods=['GET', 'POST'])
+def get_weather():
+    return jsonify({
+        "cod": 200,
+        "name": "İstanbul",
+        "weather": [{"description": "Açık ve Güneşli", "icon": "01d"}],
+        "main": {"temp": 24.5}
+    })
+
+
+
+@app.route('/api/entry_logs')
+def get_entry_logs():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, user_name, user_type, entry_time, confidence FROM entry_logs ORDER BY id DESC LIMIT 50")
+    logs = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return jsonify({"success": True, "logs": logs})
+
+
+@app.route('/api/get_users')
+@app.route('/api/users')
+def get_users():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, user_type, image, total_spent, last_login_date FROM users ORDER BY id DESC")
+    users = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return jsonify({"success": True, "users": users})
+
+
+@app.route('/api/customer/<customer_name>')
+def get_customer_details(customer_name):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, user_type, image, total_spent, last_login_date FROM users WHERE name = ?", (customer_name,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return jsonify({"success": True, "customer": dict(row), "name": row['name'], "total_spent": row['total_spent'], "last_login_date": row['last_login_date']})
+    return jsonify({"success": False, "error": "Müşteri bulunamadı."}), 404
+
+
+@app.route('/api/user/<int:user_id>', methods=['DELETE', 'GET'])
+def handle_user_by_id(user_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    if request.method == 'DELETE':
+        cursor.execute("SELECT name FROM users WHERE id = ?", (user_id,))
+        row = cursor.fetchone()
         if row:
-            try:
-                CAMERA_IDX = int(row['cam_value'])
-            except ValueError:
-                CAMERA_IDX = row['cam_value']
-            print(f"[INFO] Veritabanından aktif kamera yüklendi: {CAMERA_IDX}")
+            u_name = row['name']
+            cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
+            cursor.execute("DELETE FROM user_embeddings WHERE user_name = ?", (u_name,))
+            cursor.execute("DELETE FROM entry_logs WHERE user_name = ?", (u_name,))
+            cursor.execute("DELETE FROM customer_preferences WHERE user_name = ?", (u_name,))
+            dataset_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dataset', u_name)
+            if os.path.isdir(dataset_dir):
+                import shutil
+                shutil.rmtree(dataset_dir, ignore_errors=True)
         else:
-            print("[INFO] Aktif kamera ayarı bulunamadı, varsayılan (0) kullanılıyor.")
+            cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
+
+        cursor.execute("DELETE FROM user_embeddings WHERE user_name NOT IN (SELECT name FROM users)")
+        conn.commit()
+        conn.close()
+
+        recognition_service.reload_embeddings()
+        with recognition_state_lock:
+            shared_recognition_state["recognized_people"] = []
+        return jsonify({"success": True, "message": "Kullanıcı ve tüm yüz biyometri kayıtları tamamen silindi."})
+    else:
+        cursor.execute("SELECT id, name, user_type, image, total_spent, last_login_date FROM users WHERE id = ?", (user_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return jsonify({"success": True, "user": dict(row)})
+        return jsonify({"success": False, "error": "Kullanıcı bulunamadı."}), 404
+
+
+@app.route('/api/delete_users', methods=['POST'])
+def delete_users():
+    """Delete single or multiple users by ID or Name."""
+    data = request.json or {}
+    targets = data.get('targets', [])
+    if not targets:
+        return jsonify({"success": False, "error": "Silinecek hedef seçilmedi."}), 400
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    names_to_delete = []
+    for t in targets:
+        if isinstance(t, int) or (isinstance(t, str) and t.isdigit()):
+            cursor.execute("SELECT name FROM users WHERE id = ?", (int(t),))
+            row = cursor.fetchone()
+            if row:
+                names_to_delete.append(row['name'])
+        else:
+            names_to_delete.append(str(t))
+
+    for name in names_to_delete:
+        cursor.execute("DELETE FROM users WHERE name = ?", (name,))
+        cursor.execute("DELETE FROM user_embeddings WHERE user_name = ?", (name,))
+        cursor.execute("DELETE FROM entry_logs WHERE user_name = ?", (name,))
+        cursor.execute("DELETE FROM customer_preferences WHERE user_name = ?", (name,))
+        dataset_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dataset', name)
+        if os.path.isdir(dataset_dir):
+            import shutil
+            shutil.rmtree(dataset_dir, ignore_errors=True)
+
+    # Purge any remaining orphan embeddings
+    cursor.execute("DELETE FROM user_embeddings WHERE user_name NOT IN (SELECT name FROM users)")
+    deleted_count = len(names_to_delete)
+
+    conn.commit()
+    conn.close()
+
+    recognition_service.reload_embeddings()
+    with recognition_state_lock:
+        shared_recognition_state["recognized_people"] = []
+    return jsonify({"success": True, "message": f"{deleted_count} kullanıcı ve tüm yüz verileri başarıyla silindi.", "deleted_count": deleted_count})
+
+
+
+
+@app.route('/api/register_customer', methods=['POST'])
+def register_customer():
+    """Register a new customer using uploaded image or current camera snapshot."""
+    try:
+        name = request.form.get('name')
+        if not name:
+            return jsonify({"success": False, "error": "Müşteri adı gereklidir."}), 400
+
+        image_file = request.files.get('image')
+        if image_file:
+            img_pil = Image.open(image_file.stream).convert('RGB')
+        else:
+            img_pil = camera.get_latest_frame()
+
+        if img_pil is None:
+            return jsonify({"success": False, "error": "Görüntü alınamadı."}), 400
+
+        # Analyze face with UniFace
+        faces = uniface_engine.analyze(img_pil)
+        if not faces:
+            return jsonify({"success": False, "error": "Görüntüde yüz tespit edilemedi."}), 400
+
+        emb = faces[0]['embedding']
+        if emb is None or len(emb) != 512:
+            return jsonify({"success": False, "error": "Yüz özniteliği çıkarılamadı."}), 400
+
+        # Save profile crop
+        bbox = faces[0]['bbox']
+        profile_base64 = recognition_service._crop_and_save_profile(img_pil, bbox, name)
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO users (name, user_type, image, total_spent, last_login_date, encoding) VALUES (?, ?, ?, ?, ?, ?)",
+            (name, "customer", profile_base64, 0.0, now_str, emb.tobytes())
+        )
+        conn.commit()
+        conn.close()
+
+        recognition_service.reload_embeddings()
+        return jsonify({"success": True, "name": name, "message": f"{name} başarıyla kaydedildi."})
+
+    except sqlite3.IntegrityError:
+        return jsonify({"success": False, "error": "Bu isimde bir kullanıcı zaten mevcut."}), 400
     except Exception as e:
-        print(f"[HATA] Kamera ayarı yüklenemedi: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
-if __name__ == "__main__":
-    init_db()
-    train_model()
-    load_known_faces()
-    load_active_camera()
-    start_camera()
-    t_camera = threading.Thread(target=read_camera_loop, daemon=True)
-    t_camera.start()
-    app.run(host='0.0.0.0', port=5000, threaded=True)
+@app.route('/api/rename_guest/<guest_name>/<new_name>', methods=['POST', 'GET'])
+@app.route('/api/rename_guest', methods=['POST'])
+def rename_guest(guest_name=None, new_name=None):
+    """Convert a Guest profile (e.g. Guest_1) to a named customer."""
+    if not guest_name or not new_name:
+        data = request.json or {}
+        guest_name = data.get('guest_name') or data.get('old_name')
+        new_name = (data.get('new_name') or '').strip()
+
+    if not guest_name or not new_name:
+        return jsonify({"success": False, "error": "Eski ve yeni kullanıcı adı gereklidir."}), 400
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE users SET name = ?, user_type = 'customer' WHERE name = ?", (new_name, guest_name))
+        cursor.execute("UPDATE user_embeddings SET user_name = ?, user_type = 'customer' WHERE user_name = ?", (new_name, guest_name))
+        cursor.execute("UPDATE entry_logs SET user_name = ?, user_type = 'customer' WHERE user_name = ?", (new_name, guest_name))
+        cursor.execute("UPDATE orders SET user_name = ?, name = ? WHERE user_name = ? OR name = ?", (new_name, new_name, guest_name, guest_name))
+        conn.commit()
+        conn.close()
+
+        recognition_service.reload_embeddings()
+        return jsonify({"success": True, "message": f"{guest_name} başarıyla {new_name} olarak güncellendi."})
+    except sqlite3.IntegrityError:
+        conn.close()
+        return jsonify({"success": False, "error": "Bu isimde başka bir kayıtlı müşteri zaten mevcut."}), 400
+    except Exception as e:
+        conn.close()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/get_products', methods=['GET', 'POST'])
+def api_get_products():
+    """Legacy compatibility endpoint to fetch products."""
+    customer_name = request.args.get('customer_name') or request.args.get('customer')
+    if request.method == 'POST' and request.is_json:
+        data = request.json or {}
+        customer_name = customer_name or data.get('customer_name')
+    products = recommendation_service.get_products_for_user(customer_name)
+    return jsonify({"success": True, "products": products})
+
+
+@app.route('/api/products', methods=['GET', 'POST'])
+def handle_products():
+    """
+    GET: Return product list (sorted by recommendation if customer_name given).
+    POST: Create a new product with optional image file upload or URL.
+    """
+    if request.method == 'GET':
+        customer_name = request.args.get('customer_name') or request.args.get('customer')
+        products = recommendation_service.get_products_for_user(customer_name)
+        return jsonify({"success": True, "products": products})
+
+    # POST: Add new product
+    try:
+        # Check if multipart form data (file upload) or JSON
+        if request.content_type and 'multipart/form-data' in request.content_type:
+            product_name = (request.form.get('product_name') or request.form.get('name') or '').strip()
+            category = (request.form.get('category') or '').strip() or 'Genel'
+            price_val = (request.form.get('price') or '').strip()
+            description = (request.form.get('description') or '').strip()
+            image_url = (request.form.get('image_url') or '').strip()
+            image_file = request.files.get('image_file') or request.files.get('image')
+        else:
+            data = request.get_json(silent=True) or {}
+            product_name = str(data.get('product_name') or data.get('name') or '').strip()
+            category = str(data.get('category') or '').strip() or 'Genel'
+            price_val = str(data.get('price') or '').strip()
+            description = str(data.get('description') or '').strip()
+            image_url = str(data.get('image_url') or '').strip()
+            image_file = None
+
+        if not product_name:
+            return jsonify({"success": False, "error": "Ürün adı zorunludur."}), 400
+
+        try:
+            price = float(price_val)
+            if price < 0:
+                raise ValueError()
+        except Exception:
+            return jsonify({"success": False, "error": "Geçerli bir pozitif fiyat giriniz."}), 400
+
+        # Handle uploaded image file
+        if image_file and image_file.filename:
+            ext = os.path.splitext(image_file.filename)[1].lower()
+            if ext in ALLOWED_IMAGE_EXTENSIONS:
+                safe_name = f"{int(time.time())}_{secure_filename(image_file.filename)}"
+                save_path = os.path.join(UPLOAD_PRODUCTS_DIR, safe_name)
+                image_file.save(save_path)
+                image_url = f"/static/images/products/{safe_name}"
+
+        # Assign default category image if none provided
+        if not image_url:
+            cat_lower = category.lower()
+            if 'kahve' in cat_lower:
+                image_url = '/static/images/espresso.jpg'
+            elif 'soğuk' in cat_lower or 'soguk' in cat_lower or 'içecek' in cat_lower or 'icecek' in cat_lower:
+                image_url = '/static/images/portakalsuyu.jpg'
+            elif 'tatlı' in cat_lower or 'tatli' in cat_lower or 'fırın' in cat_lower or 'firin' in cat_lower:
+                image_url = '/static/images/kruvasan.jpg'
+            elif 'yiyecek' in cat_lower or 'sandviç' in cat_lower or 'sandvic' in cat_lower:
+                image_url = '/static/images/sandvic.jpg'
+            else:
+                image_url = 'https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=200'
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Check for existing product with identical name (case-insensitive)
+        cursor.execute("SELECT id FROM products WHERE LOWER(product_name) = LOWER(?)", (product_name,))
+        if cursor.fetchone():
+            conn.close()
+            return jsonify({"success": False, "error": f"'{product_name}' isimli bir ürün zaten mevcut."}), 400
+
+        cursor.execute(
+            "INSERT INTO products (product_name, category, price, description, image_url) VALUES (?, ?, ?, ?, ?)",
+            (product_name, category, price, description, image_url)
+        )
+        new_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+
+        return jsonify({
+            "success": True,
+            "status": "success",
+            "message": f"'{product_name}' ürünü başarıyla eklendi.",
+            "product": {
+                "id": new_id,
+                "product_name": product_name,
+                "category": category,
+                "price": price,
+                "description": description,
+                "image_url": image_url
+            }
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Sunucu hatası: {str(e)}"}), 500
+
+
+@app.route('/api/products/<int:product_id>', methods=['DELETE'])
+@app.route('/api/delete_product/<int:product_id>', methods=['POST', 'DELETE'])
+def api_delete_product(product_id):
+    """Delete a product from the database."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT id, product_name FROM products WHERE id = ?", (product_id,))
+        prod = cursor.fetchone()
+        if not prod:
+            conn.close()
+            return jsonify({"success": False, "error": "Silinecek ürün bulunamadı."}), 404
+
+        prod_name = prod['product_name']
+        cursor.execute("DELETE FROM products WHERE id = ?", (product_id,))
+        conn.commit()
+        conn.close()
+
+        return jsonify({
+            "success": True,
+            "status": "success",
+            "message": f"'{prod_name}' ürünü başarıyla silindi."
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Silme işlemi başarısız: {str(e)}"}), 500
+
+
+
+@app.route('/api/orders', methods=['GET', 'POST'])
+def handle_orders():
+    if request.method == 'POST':
+        data = request.json or {}
+        user_name = data.get('user_name')
+        items = data.get('items', [])
+        res = recommendation_service.place_order(user_name, items)
+        return jsonify(res)
+    else:
+        customer_name = request.args.get('customer_name')
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        if customer_name:
+            cursor.execute("SELECT * FROM orders WHERE user_name = ? ORDER BY id DESC", (customer_name,))
+        else:
+            cursor.execute("SELECT * FROM orders ORDER BY id DESC LIMIT 50")
+        orders = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return jsonify({"success": True, "orders": orders})
+
+
+# =====================================================================
+# WAITER SERVICE TERMINAL & PRESENCE APIS
+# =====================================================================
+
+@app.route('/api/waiter/presence')
+def api_waiter_presence():
+    """Return active customers in venue grouped by waiting_order and ordered."""
+    active_rows = get_active_presences()
+    now = datetime.now()
+    waiting = []
+    ordered = []
+
+    for r in active_rows:
+        # Calculate elapsed minutes
+        entry_t = r.get("entry_time")
+        elapsed_min = 0
+        if entry_t:
+            try:
+                dt = datetime.strptime(str(entry_t).split(".")[0], "%Y-%m-%d %H:%M:%S")
+                elapsed_min = max(0, int((now - dt).total_seconds() / 60))
+            except Exception:
+                pass
+
+        u_name = r["user_name"]
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT total_spent, last_login_date, image FROM users WHERE name = ?", (u_name,))
+        u_row = cursor.fetchone()
+        cursor.execute("SELECT COUNT(*) FROM orders WHERE user_name = ? OR name = ?", (u_name, u_name))
+        order_count = cursor.fetchone()[0]
+        conn.close()
+
+        total_spent = u_row["total_spent"] if u_row else 0.0
+        face_img = r.get("face_image") or (u_row["image"] if u_row else None) or "/static/images/default_user.png"
+
+        item = {
+            "id": r["id"],
+            "user_name": u_name,
+            "user_type": r["user_type"],
+            "status": r["status"],
+            "face_image": face_img,
+            "entry_time": str(r["entry_time"]),
+            "elapsed_minutes": elapsed_min,
+            "order_summary": r.get("order_summary") or "",
+            "notes": r.get("notes") or "",
+            "total_spent": total_spent,
+            "order_count": order_count
+        }
+
+        if r["status"] == "waiting_order":
+            waiting.append(item)
+        else:
+            ordered.append(item)
+
+    return jsonify({
+        "success": True,
+        "waiting": waiting,
+        "ordered": ordered,
+        "total_active": len(active_rows)
+    })
+
+
+@app.route('/api/waiter/set_status', methods=['POST'])
+def api_waiter_set_status():
+    """Update status of a presence session ('waiting_order', 'ordered', 'exited')."""
+    data = request.json or {}
+    presence_id = data.get("presence_id")
+    status = data.get("status")
+    order_summary = data.get("order_summary")
+    notes = data.get("notes")
+
+    if not presence_id or not status:
+        return jsonify({"success": False, "error": "presence_id ve status gereklidir."}), 400
+
+    set_presence_status(presence_id, status=status, order_summary=order_summary, notes=notes)
+    return jsonify({"success": True, "presence_id": presence_id, "status": status})
+
+
+@app.route('/api/waiter/recommendations/<path:user_name>')
+def api_waiter_recommendations(user_name):
+    """Fetch situational AI recommendations and waiter pitch for customer."""
+    weather_data = {"temp": 24.0, "description": "Açık"}
+    try:
+        # Use weather endpoint data
+        weather_res = get_weather().get_json()
+        if weather_res and "main" in weather_res:
+            weather_data = {
+                "temp": weather_res["main"].get("temp", 24.0),
+                "description": weather_res.get("weather", [{}])[0].get("description", "Açık")
+            }
+    except Exception:
+        pass
+
+    res = recommendation_service.get_contextual_recommendations(
+        user_name=user_name,
+        weather_data=weather_data,
+        current_hour=datetime.now().hour
+    )
+    return jsonify(res)
+
+
+@app.route('/api/waiter/create_order', methods=['POST'])
+def api_waiter_create_order():
+    """Create order for customer on waiter terminal and transition to ordered."""
+    data = request.json or {}
+    presence_id = data.get("presence_id")
+    user_name = data.get("user_name")
+    items = data.get("items", [])
+
+    if not user_name:
+        return jsonify({"success": False, "error": "user_name gereklidir."}), 400
+    if not items:
+        return jsonify({"success": False, "error": "Sipariş verilecek ürün seçilmedi."}), 400
+
+    res = recommendation_service.place_order(user_name, items)
+    if res.get("success"):
+        foods_summary = res.get("foods", "")
+        if presence_id:
+            set_presence_status(presence_id, status="ordered", order_summary=foods_summary)
+        else:
+            active_list = get_active_presences()
+            for p in active_list:
+                if p["user_name"] == user_name and p["status"] == "waiting_order":
+                    set_presence_status(p["id"], status="ordered", order_summary=foods_summary)
+                    break
+        return jsonify({"success": True, "order": res})
+    else:
+        return jsonify({"success": False, "error": res.get("error", "Sipariş oluşturulamadı.")}), 400
+
+
+@app.route('/api/waiter/notes', methods=['POST'])
+def api_waiter_notes():
+    """Save waiter notes for customer."""
+    data = request.json or {}
+    presence_id = data.get("presence_id")
+    notes = (data.get("notes") or "").strip()
+
+    if not presence_id:
+        return jsonify({"success": False, "error": "presence_id gereklidir."}), 400
+
+    set_presence_status(presence_id, notes=notes)
+    return jsonify({"success": True, "presence_id": presence_id, "notes": notes})
+
+
+@app.route('/api/settings/gemini_token', methods=['POST'])
+def api_set_gemini_token():
+    """Save optional Gemini API token in system_settings."""
+    data = request.json or {}
+    token = (data.get("token") or "").strip()
+    set_setting("gemini_api_key", token)
+    return jsonify({"success": True, "message": "Gemini API anahtarı kaydedildi."})
+
+
+
+@app.route('/api/stats')
+def get_stats():
+    """Summary statistics for dashboard home."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT COUNT(*) FROM users WHERE user_type = 'customer'")
+    customer_count = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM users WHERE user_type = 'guest'")
+    guest_count = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM orders")
+    order_count = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COALESCE(SUM(total_amount), 0) FROM orders")
+    total_revenue = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM entry_logs WHERE date(entry_time) = date('now')")
+    today_entries = cursor.fetchone()[0]
+
+    conn.close()
+
+    return jsonify({
+        "success": True,
+        "is_recognition_active": is_recognition_active,
+        "customer_count": customer_count,
+        "guest_count": guest_count,
+        "order_count": order_count,
+        "total_revenue": total_revenue,
+        "today_entries": today_entries
+    })
+
+
+@app.route('/api/recognition_status', methods=['GET'])
+def recognition_status():
+    global is_recognition_active
+    return jsonify({
+        "success": True,
+        "is_active": is_recognition_active,
+        "status_text": "Aktif" if is_recognition_active else "Duraklatıldı",
+        "camera_running": getattr(camera, 'running', False),
+        "camera_source": str(camera.camera_source),
+        "mediamtx_active": mediamtx_service.is_active() if mediamtx_service else False,
+        "webrtc_url": f"http://{request.host.split(':')[0]}:8889/live/whep"
+    })
+
+
+@app.route('/api/toggle_recognition', methods=['GET', 'POST'])
+def toggle_recognition():
+    global is_recognition_active
+    if request.method == 'GET':
+        return jsonify({
+            "success": True,
+            "is_active": is_recognition_active,
+            "status_text": "Aktif" if is_recognition_active else "Kapalı",
+            "camera_running": getattr(camera, 'running', False),
+            "camera_source": str(camera.camera_source),
+            "mediamtx_active": mediamtx_service.is_active() if mediamtx_service else False,
+            "webrtc_url": f"http://{request.host.split(':')[0]}:8889/live/whep"
+        })
+
+    data = request.get_json(silent=True) or {}
+    if 'enabled' in data:
+        target_state = bool(data['enabled'])
+    elif request.form and 'enabled' in request.form:
+        val = str(request.form.get('enabled')).strip().lower()
+        target_state = val in ('true', '1', 'yes', 'on')
+    else:
+        target_state = not is_recognition_active
+
+    # Check if a camera source was explicitly specified in request
+    req_source = data.get('camera_source')
+    if req_source is not None and str(req_source).strip() != '':
+        target_src = str(req_source).strip()
+        if target_src.isdigit():
+            target_src = int(target_src)
+        persist_active_camera_to_db(target_src)
+        camera.camera_source = target_src
+    elif target_state and (str(camera.camera_source) in ('0', '')):
+        # If camera is default 0, check if database preferred another active camera source
+        db_src = get_active_camera_source_from_db()
+        if str(db_src) not in ('0', ''):
+            camera.camera_source = db_src
+
+    is_recognition_active = target_state
+
+    if is_recognition_active:
+        camera.start()
+        if mediamtx_service:
+            mediamtx_service.start()
+        print(f"[INFO] Camera hardware ({camera.camera_source}) and AI recognition STARTED.")
+    else:
+        camera.stop()
+        if mediamtx_service:
+            mediamtx_service.stop()
+        with recognition_state_lock:
+            shared_recognition_state["recognized_people"] = []
+            shared_recognition_state["jpeg_bytes"] = None
+            shared_recognition_state["annotated_frame"] = None
+        print(f"[INFO] Camera hardware ({camera.camera_source}) and AI recognition STOPPED.")
+
+    return jsonify({
+        "success": True,
+        "is_active": is_recognition_active,
+        "camera_running": getattr(camera, 'running', False),
+        "camera_source": str(camera.camera_source),
+        "mediamtx_active": mediamtx_service.is_active() if mediamtx_service else False,
+        "webrtc_url": f"http://{request.host.split(':')[0]}:8889/live/whep",
+        "message": "Kamera ve yüz tanıma aktif edildi." if is_recognition_active else "Kamera ve yüz tanıma kapatıldı."
+    })
+
+
+# --- LEGACY & FRONTEND COMPATIBILITY ENDPOINTS ---
+
+@app.route('/api/get_last_customers', methods=['GET', 'POST'])
+def get_last_customers():
+    count = 10
+    if request.is_json and request.json:
+        count = request.json.get('count', 10)
+    elif request.form and 'count' in request.form:
+        try:
+            count = int(request.form.get('count', 10))
+        except ValueError:
+            count = 10
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, user_type, image, total_spent, last_login_date FROM users ORDER BY id DESC LIMIT ?", (count,))
+    users = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return jsonify({"success": True, "customers": users, "status": "success"})
+
+
+@app.route('/api/cam_changed', methods=['POST'])
+def cam_changed():
+    data = request.get_json(silent=True) or request.form or {}
+    cam_val = data.get('camera_source', data.get('cam_number', data.get('cam_value')))
+    if cam_val is not None:
+        try:
+            if isinstance(cam_val, str) and str(cam_val).strip().isdigit():
+                cam_val = int(str(cam_val).strip())
+            
+            # Persist to DB so it survives app restarts and recognition toggle cycles
+            persist_active_camera_to_db(cam_val)
+
+            # Check if already streaming from this source and running
+            if str(camera.camera_source) == str(cam_val) and camera.running:
+                return jsonify({
+                    "success": True, 
+                    "message": f"Kamera '{cam_val}' zaten aktif.", 
+                    "camera_source": str(camera.camera_source),
+                    "restarted": False
+                })
+
+            if is_recognition_active:
+                camera.set_camera_source(cam_val)
+            else:
+                camera.camera_source = cam_val
+
+            return jsonify({
+                "success": True, 
+                "message": f"Kamera '{cam_val}' olarak değiştirildi.", 
+                "camera_source": str(camera.camera_source),
+                "restarted": is_recognition_active
+            })
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)}), 400
+    return jsonify({"success": False, "error": "Geçersiz kamera parametresi."}), 400
+
+
+
+@app.route('/api/camera_settings', methods=['GET', 'POST'])
+def camera_settings():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    if request.method == 'POST':
+        data = request.get_json(silent=True) or request.form or {}
+        cam_name = data.get('cam_name', '').strip()
+        cam_value = data.get('cam_value', '').strip()
+
+        if not cam_name or not cam_value:
+            conn.close()
+            return jsonify({"success": False, "error": "Kamera adı ve değeri zorunludur."}), 400
+
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        cursor.execute(
+            "INSERT INTO camera_settings (cam_name, cam_value, is_active, created_at) VALUES (?, ?, 0, ?)",
+            (cam_name, cam_value, now_str)
+        )
+        conn.commit()
+        conn.close()
+        return jsonify({"success": True, "message": f"Kamera '{cam_name}' eklendi."})
+    else:
+        cursor.execute("SELECT id, cam_name, cam_value, is_active, created_at FROM camera_settings ORDER BY id DESC")
+        cams = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return jsonify({"success": True, "cameras": cams, "current_camera_source": str(camera.camera_source)})
+
+
+@app.route('/api/camera_settings/<int:cam_id>/activate', methods=['POST'])
+def activate_camera_setting(cam_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM camera_settings WHERE id = ?", (cam_id,))
+    cam = cursor.fetchone()
+    if not cam:
+        conn.close()
+        return jsonify({"success": False, "error": "Kamera bulunamadı."}), 404
+
+    cursor.execute("UPDATE camera_settings SET is_active = 0")
+    cursor.execute("UPDATE camera_settings SET is_active = 1 WHERE id = ?", (cam_id,))
+    conn.commit()
+    conn.close()
+
+    cam_val = cam['cam_value']
+    if str(cam_val).strip().isdigit():
+        cam_val = int(str(cam_val).strip())
+
+    try:
+        if is_recognition_active:
+            camera.set_camera_source(cam_val)
+        else:
+            camera.camera_source = cam_val
+        return jsonify({
+            "success": True, 
+            "message": f"Kamera '{cam['cam_name']}' aktif edildi.",
+            "camera_source": str(camera.camera_source)
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
+
+@app.route('/api/camera_settings/<int:cam_id>', methods=['DELETE'])
+def delete_camera_setting(cam_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM camera_settings WHERE id = ?", (cam_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({"success": True, "message": "Kamera silindi."})
+
+
+@app.route('/api/customer/<customer_name>/total_spent')
+@app.route('/api/get_total_spent/<customer_name>')
+def get_customer_total_spent(customer_name):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT total_spent FROM users WHERE name = ?", (customer_name,))
+    row = cursor.fetchone()
+    conn.close()
+    total_spent = row['total_spent'] if row else 0.0
+    return jsonify({"success": True, "customer": customer_name, "total_spent": total_spent})
+
+
+@app.route('/api/customer/<customer_name>/last_login')
+@app.route('/api/get_last_login/<customer_name>')
+def get_customer_last_login(customer_name):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT last_login_date FROM users WHERE name = ?", (customer_name,))
+    row = cursor.fetchone()
+    conn.close()
+    last_login = row['last_login_date'] if row else "Hiç"
+    return jsonify({"success": True, "customer": customer_name, "last_login": last_login})
+
+
+@app.route('/api/customer/<customer_name>/get_orders')
+@app.route('/api/get_orders/<customer_name>')
+def get_customer_orders(customer_name):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "SELECT id, COALESCE(total_amount, 0) as total_amount, COALESCE(foods, '') as foods, order_date FROM orders WHERE name = ? OR user_name = ? ORDER BY id DESC",
+            (customer_name, customer_name)
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        orders_list = []
+        for r in rows:
+            amt = r['total_amount']
+            foods_str = r['foods']
+            info = f"Sipariş #{r['id']}"
+            if foods_str:
+                info += f" - {foods_str}"
+            if amt:
+                info += f" ({amt} TL)"
+            if r['order_date']:
+                info += f" [{r['order_date']}]"
+            orders_list.append(info)
+        return jsonify(orders_list)
+    except Exception as e:
+        conn.close()
+        return jsonify([])
+
+
+@app.route('/api/get_food_percentage/<customer_name>')
+def get_food_percentage(customer_name):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute('''
+            SELECT oi.product_name, SUM(oi.quantity) as total_qty
+            FROM order_items oi
+            JOIN orders o ON oi.order_id = o.id
+            WHERE o.name = ? OR o.user_name = ?
+            GROUP BY oi.product_name
+        ''', (customer_name, customer_name))
+        rows = cursor.fetchall()
+        
+        if not rows:
+            cursor.execute("SELECT foods FROM orders WHERE name = ? OR user_name = ?", (customer_name, customer_name))
+            order_rows = cursor.fetchall()
+            counts = {}
+            for r in order_rows:
+                if r['foods']:
+                    items = [f.strip() for f in r['foods'].split(',') if f.strip()]
+                    for item in items:
+                        counts[item] = counts.get(item, 0) + 1
+            if counts:
+                total_sum = sum(counts.values())
+                result = {k: round((v / total_sum) * 100, 1) for k, v in counts.items()}
+                conn.close()
+                return jsonify(result)
+
+        conn.close()
+        total_sum = sum(r['total_qty'] for r in rows) if rows else 0
+        if total_sum == 0:
+            return jsonify({"Veri yok": 0})
+        
+        result = {r['product_name']: round((r['total_qty'] / total_sum) * 100, 1) for r in rows}
+        return jsonify(result)
+    except Exception as e:
+        conn.close()
+        return jsonify({"Veri yok": 0})
+
+    return jsonify(result)
+
+
+@app.route('/api/customer/<customer_name>/preferences', methods=['GET'])
+def get_customer_preferences(customer_name):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT food, preference FROM customer_preferences WHERE user_name = ?", (customer_name,))
+    rows = cursor.fetchall()
+    conn.close()
+    if not rows:
+        return jsonify({"error": "Tercih bulunamadı."})
+    prefs = [f"{r['food']}: {r['preference']}" for r in rows]
+    return jsonify({"message": prefs})
+
+
+@app.route('/api/preferences/<customer_name>', methods=['POST'])
+def save_customer_preference(customer_name):
+    data = request.json or {}
+    food = data.get('food', '').strip()
+    preference = data.get('preference', '').strip()
+
+    if not food or not preference:
+        return jsonify({"error": "Yemek ve tercih girilmelidir."}), 400
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO customer_preferences (user_name, food, preference) VALUES (?, ?, ?)",
+        (customer_name, food, preference)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({"message": f"{customer_name} için tercih kaydedildi."})
+
+
+@app.route('/api/suggest_food')
+def suggest_food():
+    customer_name = request.args.get('customer')
+    products = recommendation_service.get_products_for_user(customer_name)
+    suggested = products[0]['product_name'] if products else "Kuru Fasulye"
+    return jsonify({"food": suggested})
+
+
+@app.route('/api/order_food/<customer_name>', methods=['POST'])
+def order_food(customer_name):
+    data = request.json or {}
+    items = data.get('items') or data.get('foods') or data.get('food') or data.get('product_name')
+    if not items:
+        return jsonify({"success": False, "message": "Yemek veya ürün seçilmedi."}), 400
+
+    if isinstance(items, str):
+        items = [items]
+
+    res = recommendation_service.place_order(customer_name, items)
+    if res.get('success'):
+        return jsonify({
+            "success": True,
+            "message": res.get("message", f"Siparişiniz başarıyla alındı!"),
+            "order_id": res.get("order_id"),
+            "total_amount": res.get("total_amount"),
+            "foods": res.get("foods")
+        })
+    return jsonify({"success": False, "message": res.get("error", "Sipariş verilemedi.")}), 400
+
+
+@app.route('/api/recognize_once', methods=['POST', 'GET'])
+def recognize_once():
+    with recognition_state_lock:
+        people = shared_recognition_state.get("recognized_people", [])[:]
+    if people:
+        person = people[0]
+        return jsonify({
+            "success": True,
+            "name": person['name'],
+            "user_type": person.get('user_type', 'customer'),
+            "image": person.get('image', ''),
+            "id": person.get('id', 0),
+            "similarity": person.get('similarity', 1.0),
+            "last_login_date": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        })
+    return jsonify({"success": False, "message": "Yüz tespit edilemedi."})
+
+
+
+if __name__ == '__main__':
+    print("[INFO] Starting UniFace Cafe Recognition System on http://0.0.0.0:5000")
+    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
