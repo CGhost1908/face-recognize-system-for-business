@@ -321,12 +321,15 @@ def get_active_presences():
     return rows
 
 
-def set_presence_status(presence_id, status, order_summary=None, notes=None):
-    """Update status of a presence session ('waiting_order', 'ordered', 'exited')."""
+def set_presence_status(presence_id, status=None, order_summary=None, notes=None):
+    """Update status of a presence session ('waiting_order', 'ordered', 'exited') or its notes/summary."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    updates = ["status = ?", "last_seen_time = CURRENT_TIMESTAMP"]
-    params = [status]
+    updates = ["last_seen_time = CURRENT_TIMESTAMP"]
+    params = []
+    if status is not None:
+        updates.append("status = ?")
+        params.append(status)
     if order_summary is not None:
         updates.append("order_summary = ?")
         params.append(order_summary)

@@ -1,156 +1,401 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="tr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Dashboard - Yüz Tanıma Sistemi</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Yüz Tanıma & İşletme Admin Paneli</title>
+    
+    <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}" />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" />
 </head>
-<body>
-    <div class="dashboard-container">
+<body class="dashboard-body">
+    <div class="dashboard-layout">
+        <!-- Sidebar Navigation -->
         <aside class="sidebar">
-            <div class="sidebar-header">
-                <h2>Yüz Tanıma Admin</h2>
-                <button class="sidebar-toggle" id="sidebarToggle">☰</button>
+            <div class="sidebar-brand">
+                <span class="material-symbols-outlined brand-icon">center_focus_strong</span>
+                <div class="brand-info">
+                    <h2>Kafe Yönetim</h2>
+                    <p>Yönetici Paneli</p>
+                </div>
             </div>
-            <nav class="sidebar-nav">
-                <a href="#" class="nav-item active" data-page="home">
-                    <span class="icon">🏠</span>
-                    <span class="label">Ana Sayfa</span>
+
+            <nav class="sidebar-menu">
+                <a href="#" class="nav-link active" data-page="home">
+                    <span class="material-symbols-outlined">dashboard</span>
+                    <span>Genel Bakış</span>
                 </a>
-                <a href="#" class="nav-item" data-page="customers">
-                    <span class="icon">👥</span>
-                    <span class="label">Müşteriler</span>
+                <a href="#" class="nav-link" data-page="camera">
+                    <span class="material-symbols-outlined">videocam</span>
+                    <span>Canlı Kamera</span>
                 </a>
-                <a href="#" class="nav-item" data-page="camera">
-                    <span class="icon">📷</span>
-                    <span class="label">Kamera</span>
+                <a href="#" class="nav-link" data-page="customers">
+                    <span class="material-symbols-outlined">group</span>
+                    <span>Müşteriler</span>
                 </a>
-                <a href="#" class="nav-item" data-page="reports">
-                    <span class="icon">📊</span>
-                    <span class="label">Raporlar</span>
+                <a href="#" class="nav-link" data-page="products">
+                    <span class="material-symbols-outlined">restaurant_menu</span>
+                    <span>Ürün & Menü</span>
                 </a>
-                <a href="#" class="nav-item" data-page="settings">
-                    <span class="icon">⚙️</span>
-                    <span class="label">Ayarlar</span>
+                <a href="#" class="nav-link" data-page="logs">
+                    <span class="material-symbols-outlined">history</span>
+                    <span>Giriş & Siparişler</span>
+                </a>
+                <a href="#" class="nav-link" data-page="settings">
+                    <span class="material-symbols-outlined">settings</span>
+                    <span>Sistem Ayarları</span>
                 </a>
             </nav>
+
+            <div class="sidebar-footer">
+                <div class="system-status-box" id="sidebarAiStatusBox" title="Sistem ve Kamera Durumu">
+                    <span class="status-dot green" id="sidebarAiDot"></span>
+                    <span id="sidebarAiText">Sistem: Aktif</span>
+                </div>
+            </div>
         </aside>
 
+        <!-- Main Content Area -->
         <main class="main-content">
+            <!-- Top App Bar -->
             <header class="topbar">
                 <div class="topbar-left">
-                    <h1 id="pageTitle">Ana Sayfa</h1>
+                    <div class="topbar-title">
+                        <h1 id="pageTitle">Genel Bakış</h1>
+                        <p id="pageSubtitle">Müşteri akışı ve canlı satış takibi</p>
+                    </div>
                 </div>
-                <div class="topbar-right">
-                    <div class="user-menu">
-                        <span id="username">Admin</span>
-                        <button class="user-button" id="userMenuBtn">👤</button>
-                        <div class="dropdown-menu" id="userDropdown">
-                            <a href="#" id="profileLink">Profil</a>
-                            <a href="#" id="logoutLink">Çıkış Yap</a>
+
+                <div class="topbar-actions">
+                    <!-- Global Camera & AI Recognition Controller -->
+                    <button class="btn-topbar-rec active" id="btnTopbarToggleRec" onclick="dashboard.toggleRecognition()" title="Kamera ve Tanımayı Aç / Kapat">
+                        <span class="rec-pulse-dot active" id="topbarRecDot"></span>
+                        <span class="material-symbols-outlined" id="topbarRecIcon">videocam</span>
+                        <span id="topbarRecText">Kamera Aktif</span>
+                    </button>
+
+                    <!-- Quick Waiter Terminal Screen Link -->
+                    <a href="{{ url_for('index') }}" class="btn-topbar-kiosk" target="_blank" title="Garson Servis Terminalini Aç">
+                        <span class="material-symbols-outlined">room_service</span>
+                        <span>Garson Ekranı</span>
+                    </a>
+
+                    <div class="topbar-divider"></div>
+
+                    <!-- User Profile Badge -->
+                    <div class="user-profile-badge">
+                        <div class="user-avatar-circle">
+                            <span class="material-symbols-outlined">person</span>
+                        </div>
+                        <div class="user-meta">
+                            <span id="username" class="user-name">Admin</span>
+                            <span class="user-role">Yönetici</span>
                         </div>
                     </div>
+
+                    <!-- Standalone Modern Logout Button -->
+                    <button class="btn-topbar-logout" id="logoutBtn" title="Güvenli Çıkış Yap">
+                        <span class="material-symbols-outlined">logout</span>
+                        <span>Çıkış</span>
+                    </button>
                 </div>
             </header>
 
-            <div class="content">
-                <section id="home-page" class="page active">
-                    <div class="welcome-box">
-                        <h2>Hoşgeldiniz!</h2>
-                        <p>Yüz Tanıma Performans Sistemi Admin Paneline hoşgeldiniz.</p>
+            <div class="content-body">
+                <!-- ================= 1. HOME / OVERVIEW PAGE ================= -->
+                <section id="home-page" class="page-section active">
+                    <!-- KPI Cards Row -->
+                    <div class="kpi-grid">
+                        <div class="kpi-card">
+                            <div class="kpi-icon blue">
+                                <span class="material-symbols-outlined">person</span>
+                            </div>
+                            <div class="kpi-data">
+                                <span class="kpi-title">Kayıtlı Müşteriler</span>
+                                <h3 id="statCustomerCount">0</h3>
+                                <span class="kpi-sub">Sürekli Müşteriler</span>
+                            </div>
+                        </div>
+
+                        <div class="kpi-card">
+                            <div class="kpi-icon orange">
+                                <span class="material-symbols-outlined">person_add</span>
+                            </div>
+                            <div class="kpi-data">
+                                <span class="kpi-title">Misafirler</span>
+                                <h3 id="statGuestCount">0</h3>
+                                <span class="kpi-sub">Ziyaretçi Sayısı</span>
+                            </div>
+                        </div>
+
+                        <div class="kpi-card">
+                            <div class="kpi-icon green">
+                                <span class="material-symbols-outlined">receipt_long</span>
+                            </div>
+                            <div class="kpi-data">
+                                <span class="kpi-title">Toplam Sipariş</span>
+                                <h3 id="statOrderCount">0</h3>
+                                <span class="kpi-sub">Tamamlanan Satışlar</span>
+                            </div>
+                        </div>
+
+                        <div class="kpi-card">
+                            <div class="kpi-icon purple">
+                                <span class="material-symbols-outlined">payments</span>
+                            </div>
+                            <div class="kpi-data">
+                                <span class="kpi-title">Toplam Gelir</span>
+                                <h3 id="statTotalRevenue">0.00 ₺</h3>
+                                <span class="kpi-sub">Kasa Toplamı</span>
+                            </div>
+                        </div>
                     </div>
 
-                    <div class="stats-grid">
-                        <div class="stat-card">
-                            <div class="stat-value" id="totalCustomers">0</div>
-                            <div class="stat-label">Toplam Müşteri</div>
+                    <!-- Live Activity Split Grid -->
+                    <div class="dashboard-split-grid">
+                        <!-- Left: Live Recognition Feed -->
+                        <div class="dash-card">
+                            <div class="card-title-row">
+                                <span class="material-symbols-outlined text-blue">center_focus_strong</span>
+                                <h3>Son Algılanan Kişi</h3>
+                                <span class="status-pill green">Canlı</span>
+                            </div>
+                            <div class="live-recognized-box" id="liveRecognizedBox">
+                                <div class="rec-avatar-wrapper">
+                                    <img id="dashRecImage" src="https://cdn.pixabay.com/photo/2023/02/18/11/00/icon-7797704_640.png" alt="Yüz" />
+                                </div>
+                                <div class="rec-details">
+                                    <h2 id="dashRecName">Bekleniyor...</h2>
+                                    <p id="dashRecType">Kamera Açık</p>
+                                    <span class="time-badge" id="dashRecTime">--:--:--</span>
+                                </div>
+                            </div>
                         </div>
-                        <div class="stat-card">
-                            <div class="stat-value" id="todayOrders">0</div>
-                            <div class="stat-label">Bugünkü Siparişler</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-value" id="totalRevenue">$0</div>
-                            <div class="stat-label">Toplam Gelir</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-value" id="cameraStatus">✓ Aktif</div>
-                            <div class="stat-label">Kamera Durumu</div>
-                        </div>
-                    </div>
 
-                    <div class="recent-customers">
-                        <h3>Son Müşteriler</h3>
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>İsim</th>
-                                    <th>Son Giriş</th>
-                                    <th>Toplam Harcama</th>
-                                </tr>
-                            </thead>
-                            <tbody id="recentCustomersTable">
-                                <tr>
-                                    <td colspan="3" class="empty">Müşteri yok</td>
-                                </tr>
-                            </tbody>
-                        </table>
+                        <!-- Right: Recent Entry Check-ins -->
+                        <div class="dash-card">
+                            <div class="card-title-row">
+                                <span class="material-symbols-outlined text-green">history</span>
+                                <h3>Son Kafe Girişleri</h3>
+                                <button class="btn-text" onclick="dashboard.switchPage('logs')" title="Tüm Giriş Loglarını Gör">
+                                    <span>Tümünü Gör</span>
+                                    <span class="material-symbols-outlined" style="font-size: 15px;">arrow_forward</span>
+                                </button>
+                            </div>
+                            <div class="table-responsive">
+                                <table class="custom-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Müşteri / Misafir</th>
+                                            <th>Tür</th>
+                                            <th>Giriş Saati</th>
+                                            <th>Güven Skoru</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="recentEntriesTable">
+                                        <tr><td colspan="4" class="text-muted">Giriş kaydı bekleniyor...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
                 </section>
 
-                <section id="customers-page" class="page">
-                    <div class="page-header">
-                        <h2>Müşteri Yönetimi</h2>
-                        <button class="btn btn-primary" id="addCustomerBtn">Yeni Müşteri Ekle</button>
-                    </div>
-                    <div class="customers-container" id="customersContainer">
-                    </div>
-                </section>
-
-                <section id="camera-page" class="page">
-                    <div class="page-header">
-                        <h2>Kamera Kontrolü</h2>
-                    </div>
-                    <div class="camera-container">
-                        <div class="video-feed">
-                            <img id="cameraFeed" src="/video_feed" alt="Kamera Akışı">
+                <!-- ================= 2. CAMERA CONTROL PAGE ================= -->
+                <section id="camera-page" class="page-section">
+                    <div class="dash-card">
+                        <div class="card-title-row">
+                            <span class="material-symbols-outlined text-blue">videocam</span>
+                            <h3>Canlı Kamera</h3>
                         </div>
-                        <div class="camera-controls">
-                            <label>Kamera Seçimi:</label>
-                            <input type="number" id="cameraIndex" min="0" max="5" value="0">
-                            <button class="btn btn-primary" id="changeCameraBtn">Kamerası Değiştir</button>
-                        </div>
-                    </div>
-                </section>
+                        <div class="camera-control-layout">
+                            <div class="dash-video-wrapper" onclick="dashboard.toggleFullscreenCamera()" style="cursor:pointer; position:relative;" title="Tam Ekran Odaklama İçin Tıklayın">
+                                <video id="dashWebRTCFeed" autoplay playsinline muted style="display:none; width:100%; height:100%; object-fit:contain; border-radius:12px;"></video>
+                                <img id="dashCameraFeed" src="{{ url_for('video_feed') }}" alt="Kamera Akışı" style="width:100%; height:100%; object-fit:contain; border-radius:12px;" />
+                            </div>
+                            <div class="camera-sidebar-controls">
+                                <h4>Kamera Ayarları</h4>
 
-                <section id="reports-page" class="page">
-                    <div class="page-header">
-                        <h2>Raporlar</h2>
-                    </div>
-                    <div class="reports-container">
-                        <p>Raporlar sayfası geliştirilme aşamasındadır...</p>
-                    </div>
-                </section>
-
-                <section id="settings-page" class="page">
-                    <div class="page-header">
-                        <h2>Ayarlar</h2>
-                    </div>
-                    <div class="settings-container">
-                        <div class="setting-group">
-                            <h3>Hesap Ayarları</h3>
-                            <form id="settingsForm">
                                 <div class="form-group">
-                                    <label for="settingsUsername">Kullanıcı Adı:</label>
-                                    <input type="text" id="settingsUsername" disabled>
+                                    <label>Kamera Kaynağı:</label>
+                                    <div class="input-inline" style="display:flex; gap:6px;">
+                                        <input type="text" id="camIndexInput" value="0" placeholder="0 veya RTSP URL" class="form-control" />
+                                        <button class="btn btn-primary" id="btnChangeCam">Değiştir</button>
+                                    </div>
+                                </div>
+
+                                <div class="rec-control-card">
+                                    <div class="rec-control-header">
+                                        <div class="rec-title-group">
+                                            <span class="material-symbols-outlined text-blue">videocam</span>
+                                            <strong>Kamera & AI Durumu</strong>
+                                        </div>
+                                        <span class="badge-status-pill active" id="camRecStatusBadge">Açık</span>
+                                    </div>
+                                    <div class="cam-info-list">
+                                        <div class="cam-info-item">
+                                            <span class="info-label">Akış Modu:</span>
+                                            <span class="info-val text-green" id="streamTypeBadge">WebRTC / MJPEG</span>
+                                        </div>
+                                        <div class="cam-info-item">
+                                            <span class="info-label">Yapay Zeka:</span>
+                                            <span class="info-val text-blue">ArcFace + CUDA</span>
+                                        </div>
+                                    </div>
+                                    <p class="rec-control-desc">Kamera akışını üst bardaki <strong>Kamera</strong> butonundan açıp kapatabilirsiniz.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Camera Presets & RTSP Management Card -->
+                    <div class="dash-card">
+                        <div class="card-title-row">
+                            <span class="material-symbols-outlined text-orange">tune</span>
+                            <h3>Kamera Presetleri & RTSP Kaynakları (LocalStorage & DB)</h3>
+                        </div>
+                        <div class="preset-form-layout" style="display:flex; gap:12px; margin-bottom:20px; align-items:flex-end;">
+                            <div style="flex:1;">
+                                <label style="font-size:12px; color:var(--text-secondary);">Kamera / Preset Adı:</label>
+                                <input type="text" id="presetNameInput" placeholder="Örn: Ana Kapı RTSP Kamera" class="form-control" />
+                            </div>
+                            <div style="flex:1.5;">
+                                <label style="font-size:12px; color:var(--text-secondary);">Kamera Kaynağı (Sayı veya RTSP Stream URL):</label>
+                                <input type="text" id="presetSourceInput" placeholder="Örn: 0, 1 veya rtsp://192.168.1.100:554/stream" class="form-control" />
+                            </div>
+                            <button class="btn btn-success" onclick="dashboard.addCameraPreset()">
+                                <span class="material-symbols-outlined">add</span>
+                                Preset Kaydet
+                            </button>
+                        </div>
+
+                        <div class="presets-grid" id="cameraPresetsList" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:12px;">
+                            <!-- Dynamically loaded by dashboard.js -->
+                        </div>
+                    </div>
+                </section>
+
+
+                <!-- ================= 3. CUSTOMER CRM PAGE ================= -->
+                <section id="customers-page" class="page-section">
+                    <div class="dash-card">
+                        <div class="card-header-bar">
+                            <div class="search-filter-box">
+                                <span class="material-symbols-outlined">search</span>
+                                <input type="text" id="customerSearchInput" placeholder="Müşteri veya misafir ismi ara..." class="form-control" />
+                            </div>
+                            <div class="tab-filters">
+                                <button class="btn-tab active" data-filter="all">Tümü</button>
+                                <button class="btn-tab" data-filter="customer">Kayıtlılar</button>
+                                <button class="btn-tab" data-filter="guest">Misafirler</button>
+                            </div>
+                            <div class="bulk-actions">
+                                <button class="btn btn-danger btn-shadow" onclick="dashboard.deleteSelectedCustomers()">
+                                    <span class="material-symbols-outlined" style="font-size:16px; vertical-align:middle;">delete</span>
+                                    Seçilenleri Sil
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="table-responsive">
+                            <table class="custom-table" id="customersCrmTable">
+                                <thead>
+                                    <tr>
+                                        <th style="width:40px; text-align:center;">
+                                            <input type="checkbox" id="selectAllCustomers" onclick="dashboard.toggleSelectAllCustomers(this)" class="custom-checkbox" />
+                                        </th>
+                                        <th>Profil</th>
+                                        <th>Kullanıcı Adı</th>
+                                        <th>Kullanıcı Türü</th>
+                                        <th>Son Giriş</th>
+                                        <th>Toplam Harcama</th>
+                                        <th>İşlemler</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="customersTableBody">
+                                    <tr><td colspan="7" class="text-muted">Yükleniyor...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+
+                <!-- ================= 4. PRODUCTS & MENU PAGE ================= -->
+                <section id="products-page" class="page-section">
+                    <div class="dash-card">
+                        <div class="card-title-row" style="flex-wrap:wrap; gap:12px;">
+                            <div style="display:flex; align-items:center; gap:8px; flex:1;">
+                                <span class="material-symbols-outlined text-orange">restaurant_menu</span>
+                                <h3>Kafe Menü & Ürün Yönetimi</h3>
+                            </div>
+                            <button class="btn btn-success" id="btnOpenAddProductModal" onclick="dashboard.openAddProductModal()" title="Yeni Menü Ürünü Ekle">
+                                <span class="material-symbols-outlined">add</span>
+                                <span>Yeni Ürün Ekle</span>
+                            </button>
+                        </div>
+
+                        <!-- Category Filter Tabs -->
+                        <div class="tab-filters" id="productCategoryTabs" style="margin-bottom: 18px; flex-wrap:wrap;">
+                            <button class="btn-tab active" data-prod-filter="all" onclick="dashboard.filterProducts('all')">Tümü</button>
+                            <button class="btn-tab" data-prod-filter="Kahve" onclick="dashboard.filterProducts('Kahve')">☕ Kahve</button>
+                            <button class="btn-tab" data-prod-filter="Soğuk İçecek" onclick="dashboard.filterProducts('Soğuk İçecek')">🥤 Soğuk İçecek</button>
+                            <button class="btn-tab" data-prod-filter="Tatlı & Fırın" onclick="dashboard.filterProducts('Tatlı & Fırın')">🥐 Tatlı & Fırın</button>
+                            <button class="btn-tab" data-prod-filter="Yiyecek" onclick="dashboard.filterProducts('Yiyecek')">🥪 Yiyecek</button>
+                        </div>
+
+                        <div class="products-admin-grid" id="adminProductsGrid">
+                            <!-- Loaded dynamically by dashboard.js -->
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ================= 5. LOGS PAGE ================= -->
+                <section id="logs-page" class="page-section">
+                    <div class="dash-card">
+                        <div class="card-title-row">
+                            <span class="material-symbols-outlined text-purple">history</span>
+                            <h3>Giriş & İşlem Geçmişi</h3>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="custom-table">
+                                <thead>
+                                    <tr>
+                                        <th>#ID</th>
+                                        <th>Kullanıcı</th>
+                                        <th>Tür</th>
+                                        <th>Tarih & Saat</th>
+                                        <th>Skor / Detay</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="fullLogsTableBody">
+                                    <tr><td colspan="5" class="text-muted">Yükleniyor...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ================= 6. SETTINGS PAGE ================= -->
+                <section id="settings-page" class="page-section">
+                    <div class="dash-card">
+                        <div class="card-title-row">
+                            <span class="material-symbols-outlined text-blue">settings</span>
+                            <h3>Yönetici & Sistem Ayarları</h3>
+                        </div>
+                        <div class="settings-form-layout">
+                            <div class="setting-block">
+                                <h4>Admin Hesabı</h4>
+                                <div class="form-group">
+                                    <label>Kullanıcı Adı:</label>
+                                    <input type="text" id="settingsUsername" disabled class="form-control" />
                                 </div>
                                 <div class="form-group">
-                                    <label for="settingsEmail">E-posta:</label>
-                                    <input type="email" id="settingsEmail" disabled>
+                                    <label>E-posta:</label>
+                                    <input type="email" id="settingsEmail" disabled class="form-control" />
                                 </div>
-                                <button type="button" class="btn btn-secondary" id="changePasswordBtn">Şifreyi Değiştir</button>
-                            </form>
+                            </div>
                         </div>
                     </div>
                 </section>
@@ -158,9 +403,80 @@
         </main>
     </div>
 
-    <div class="alert alert-info" id="infoAlert"></div>
-    <div class="alert alert-error" id="errorAlert"></div>
-    <div class="alert alert-success" id="successAlert"></div>
+    <!-- Rename Guest Modal -->
+    <div class="modal-backdrop" id="renameModal" style="display:none;">
+        <div class="modal-card">
+            <h3>Misafiri Kayıtlı Müşteriye Dönüştür</h3>
+            <p>Seçilen misafir için gerçek müşteri adını girin:</p>
+            <input type="hidden" id="renameOldName" />
+            <input type="text" id="renameNewName" class="form-control" placeholder="Örn: Eren Yılmaz" style="margin:15px 0;" />
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="dashboard.closeRenameModal()">İptal</button>
+                <button class="btn btn-primary" onclick="dashboard.submitRenameGuest()">Kaydet & Dönüştür</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Product Modal -->
+    <div class="modal-backdrop" id="addProductModal" style="display:none;">
+        <div class="modal-card" style="max-width: 480px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                <h3 style="display:flex; align-items:center; gap:8px; font-size:17px; margin:0;">
+                    <span class="material-symbols-outlined text-orange">add_shopping_cart</span>
+                    Yeni Menü Ürünü Ekle
+                </h3>
+                <button class="btn-icon" onclick="dashboard.closeAddProductModal()" style="font-size:22px; cursor:pointer;" title="Kapat">&times;</button>
+            </div>
+            
+            <form id="addProductForm" onsubmit="event.preventDefault(); dashboard.submitAddProduct();">
+                <div class="form-group">
+                    <label>Ürün Adı: *</label>
+                    <input type="text" id="newProdName" required placeholder="Örn: Filtre Kahve" class="form-control" />
+                </div>
+
+                <div class="form-group">
+                    <label>Kategori: *</label>
+                    <div style="display:flex; gap:8px;">
+                        <select id="newProdCategorySelect" class="form-control" onchange="dashboard.onCategorySelectChange(this)" style="flex:1;">
+                            <option value="Kahve">Kahve</option>
+                            <option value="Soğuk İçecek">Soğuk İçecek</option>
+                            <option value="Tatlı & Fırın">Tatlı & Fırın</option>
+                            <option value="Yiyecek">Yiyecek</option>
+                            <option value="__custom__">+ Yeni Kategori Yaz...</option>
+                        </select>
+                        <input type="text" id="newProdCategoryCustom" placeholder="Yeni kategori..." class="form-control" style="flex:1; display:none;" />
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Fiyat (₺): *</label>
+                    <input type="number" id="newProdPrice" step="0.5" min="0" required placeholder="Örn: 65.00" class="form-control" />
+                </div>
+
+                <div class="form-group">
+                    <label>Açıklama / İçerik:</label>
+                    <input type="text" id="newProdDesc" placeholder="Örn: %100 Arabica çekirdeklerinden taze demlenmiş" class="form-control" />
+                </div>
+
+                <div class="form-group">
+                    <label>Ürün Görseli (Dosya Seçin veya URL Girin):</label>
+                    <input type="file" id="newProdImageFile" accept="image/*" class="form-control" style="margin-bottom:6px; padding:6px; cursor:pointer;" />
+                    <input type="text" id="newProdImageUrl" placeholder="veya doğrudan görsel URL'si (isteğe bağlı)" class="form-control" />
+                    <small style="font-size:11px; color:var(--text-secondary); margin-top:3px; display:block;">
+                        * Görsel seçilmezse kategoriye uygun standart görsel otomatik atanır.
+                    </small>
+                </div>
+
+                <div class="modal-actions" style="margin-top:20px;">
+                    <button type="button" class="btn btn-secondary" onclick="dashboard.closeAddProductModal()">İptal</button>
+                    <button type="submit" class="btn btn-success" id="btnSubmitAddProduct">
+                        <span class="material-symbols-outlined">check</span>
+                        Ürünü Kaydet
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
 
     <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
 </body>
