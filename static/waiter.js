@@ -76,15 +76,41 @@ class WaiterTerminal {
         this.renderPresenceList();
     }
 
-    async fetchWeather() {
+    fetchWeather() {
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                (pos) => {
+                    const lat = pos.coords.latitude;
+                    const lon = pos.coords.longitude;
+                    this.requestWeatherApi(lat, lon);
+                },
+                (err) => {
+                    this.requestWeatherApi();
+                },
+                { timeout: 6000, maximumAge: 600000 }
+            );
+        } else {
+            this.requestWeatherApi();
+        }
+    }
+
+    async requestWeatherApi(lat = null, lon = null) {
         try {
-            const res = await fetch('/api/weather');
+            let url = '/api/weather';
+            if (lat !== null && lon !== null) {
+                url += `?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`;
+            }
+            const res = await fetch(url);
             if (res.ok) {
                 const data = await res.json();
-                const temp = Math.round(data.main?.temp || 24);
+                const temp = Math.round(data.main?.temp || 22);
                 const desc = data.weather?.[0]?.description || 'Açık';
+                const city = data.name || 'İstanbul';
+                const source = data.source || '';
                 const el = document.getElementById('weatherText');
-                if (el) el.textContent = `${temp}°C ${desc}`;
+                const widget = document.getElementById('topbarWeather');
+                if (el) el.textContent = `${city} ${temp}°C • ${desc}`;
+                if (widget && source) widget.title = `Hava Durumu Kaynağı: ${source} (Canlı Konum)`;
             }
         } catch (e) {}
     }

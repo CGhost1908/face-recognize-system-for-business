@@ -12,6 +12,7 @@ import base64
 import threading
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, Response, redirect, url_for, session, send_from_directory
+import requests
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from PIL import Image
@@ -513,14 +514,141 @@ def get_current_recognized_person():
     })
 
 
+WEATHER_CACHE = {
+    "data": None,
+    "timestamp": 0,
+    "lat": None,
+    "lon": None
+}
+WEATHER_CACHE_TTL = 1200  # 20 minutes (preserves AccuWeather 50 calls/day free quota)
+
+
+def fetch_weather_by_coords(lat, lon):
+    """
+    Fetches real-time weather using AccuWeather API with location coordinates.
+    Falls back to Open-Meteo if AccuWeather key is not configured or limit reached.
+    """
+    global WEATHER_CACHE
+    now = time.time()
+
+    # Check cache (within 20 mins and approximately same location)
+    if (
+        WEATHER_CACHE["data"] is not None
+        and now - WEATHER_CACHE["timestamp"] < WEATHER_CACHE_TTL
+        and WEATHER_CACHE["lat"] is not None
+        and abs(WEATHER_CACHE["lat"] - lat) < 0.05
+        and abs(WEATHER_CACHE["lon"] - lon) < 0.05
+    ):
+        return WEATHER_CACHE["data"]
+
+    accuweather_key = get_setting("accuweather_api_key") or os.environ.get("ACCUWEATHER_API_KEY")
+
+    if accuweather_key:
+        try:
+            # 1. AccuWeather Geoposition Search
+            geo_url = "http://dataservice.accuweather.com/locations/v1/cities/geoposition/search"
+            geo_res = requests.get(
+                geo_url,
+                params={"apikey": accuweather_key, "q": f"{lat},{lon}", "language": "tr-tr"},
+                timeout=5
+            )
+            if geo_res.status_code == 200:
+                geo_data = geo_res.json()
+                location_key = geo_data.get("Key")
+                city_name = geo_data.get("LocalizedName") or "İstanbul"
+
+                # 2. AccuWeather Current Conditions
+                cond_url = f"http://dataservice.accuweather.com/currentconditions/v1/{location_key}"
+                cond_res = requests.get(
+                    cond_url,
+                    params={"apikey": accuweather_key, "language": "tr-tr", "details": "true"},
+                    timeout=5
+                )
+                if cond_res.status_code == 200:
+                    cond_data = cond_res.json()
+                    if cond_data and len(cond_data) > 0:
+                        first = cond_data[0]
+                        temp_val = float(first.get("Temperature", {}).get("Metric", {}).get("Value", 22.0))
+                        weather_text = first.get("WeatherText", "Açık")
+                        icon_id = first.get("WeatherIcon", 1)
+
+                        result = {
+                            "cod": 200,
+                            "source": "AccuWeather",
+                            "name": city_name,
+                            "weather": [{"description": weather_text, "icon": str(icon_id)}],
+                            "main": {"temp": temp_val}
+                        }
+                        WEATHER_CACHE = {"data": result, "timestamp": now, "lat": lat, "lon": lon}
+                        return result
+            else:
+                print(f"[WARN] AccuWeather API returned HTTP {geo_res.status_code}: {geo_res.text[:120]}")
+        except Exception as e:
+            print(f"[WARN] AccuWeather request failed: {e}")
+
+    # Fallback to Open-Meteo for exact coordinates
+    try:
+        om_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
+        om_res = requests.get(om_url, timeout=5)
+        if om_res.status_code == 200:
+            om_data = om_res.json()
+            curr = om_data.get("current_weather", {})
+            temp_val = float(curr.get("temperature", 22.0))
+            code = int(curr.get("weathercode", 0))
+
+            # Code to Turkish description mapping
+            w_map = {
+                0: "Açık", 1: "Çoğunlukla Açık", 2: "Parçalı Bulutlu", 3: "Bulutlu",
+                45: "Sisli", 48: "Kırağılı Sis", 51: "Hafif Çisenti", 53: "Çisenti",
+                55: "Yoğun Çisenti", 61: "Hafif Yağmur", 63: "Yağmurlu", 65: "Kuvvetli Yağmur",
+                71: "Hafif Kar", 73: "Karlı", 75: "Yoğun Kar", 80: "Sağanak Yağış",
+                81: "Kuvvetli Sağanak", 82: "Şiddetli Sağanak", 95: "Gök Gürültülü Fırtına"
+            }
+            weather_text = w_map.get(code, "Açık")
+
+            source_label = "AccuWeather (Anahtar Bekleniyor - Canlı Konum)" if not accuweather_key else "AccuWeather Yedek (Canlı Konum)"
+            result = {
+                "cod": 200,
+                "source": source_label,
+                "name": "Konumunuz",
+                "weather": [{"description": weather_text, "icon": "01d"}],
+                "main": {"temp": temp_val}
+            }
+            WEATHER_CACHE = {"data": result, "timestamp": now, "lat": lat, "lon": lon}
+            return result
+    except Exception as e:
+        print(f"[WARN] Open-Meteo fallback failed: {e}")
+
+    # Default fallback
+    return {
+        "cod": 200,
+        "source": "Varsayılan",
+        "name": "İstanbul",
+        "weather": [{"description": "Açık", "icon": "01d"}],
+        "main": {"temp": 22.0}
+    }
+
+
 @app.route('/api/weather', methods=['GET', 'POST'])
 def get_weather():
-    return jsonify({
-        "cod": 200,
-        "name": "İstanbul",
-        "weather": [{"description": "Açık ve Güneşli", "icon": "01d"}],
-        "main": {"temp": 24.5}
-    })
+    lat = request.args.get('lat')
+    lon = request.args.get('lon')
+
+    if not lat or not lon:
+        if request.is_json and request.json:
+            lat = request.json.get('lat')
+            lon = request.json.get('lon')
+
+    try:
+        lat = float(lat)
+        lon = float(lon)
+    except (TypeError, ValueError):
+        # Default coordinates (Istanbul center)
+        lat = 41.0082
+        lon = 28.9784
+
+    data = fetch_weather_by_coords(lat, lon)
+    return jsonify(data)
 
 
 
@@ -1030,6 +1158,45 @@ def api_set_gemini_token():
     token = (data.get("token") or "").strip()
     set_setting("gemini_api_key", token)
     return jsonify({"success": True, "message": "Gemini API anahtarı kaydedildi."})
+
+
+@app.route('/api/settings/accuweather_token', methods=['POST'])
+def api_set_accuweather_token():
+    """Save AccuWeather API token in system_settings."""
+    data = request.json or {}
+    token = (data.get("token") or "").strip()
+    set_setting("accuweather_api_key", token)
+    # Clear weather cache to fetch fresh data with new key
+    global WEATHER_CACHE
+    WEATHER_CACHE = {"data": None, "timestamp": 0, "lat": None, "lon": None}
+    return jsonify({"success": True, "message": "AccuWeather API anahtarı kaydedildi."})
+
+
+@app.route('/api/settings/tokens', methods=['GET'])
+def api_get_tokens_status():
+    """Return whether API tokens are configured (without exposing full secret)."""
+    accu_key = get_setting("accuweather_api_key") or os.environ.get("ACCUWEATHER_API_KEY")
+    gemini_key = get_setting("gemini_api_key") or os.environ.get("GEMINI_API_KEY")
+
+    def mask(k):
+        if not k:
+            return ""
+        if len(k) <= 8:
+            return "****"
+        return f"{k[:4]}****{k[-4:]}"
+
+    return jsonify({
+        "success": True,
+        "accuweather": {
+            "configured": bool(accu_key),
+            "masked": mask(accu_key)
+        },
+        "gemini": {
+            "configured": bool(gemini_key),
+            "masked": mask(gemini_key)
+        }
+    })
+
 
 
 

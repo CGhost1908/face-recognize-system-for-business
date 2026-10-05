@@ -396,6 +396,30 @@
                                     <input type="email" id="settingsEmail" disabled class="form-control" />
                                 </div>
                             </div>
+
+                            <div class="setting-block">
+                                <h4>API & Dış Servis Entegrasyonları</h4>
+                                <div class="form-group">
+                                    <label>AccuWeather API Anahtarı (Canlı Konum Hava Durumu):</label>
+                                    <div style="display:flex; gap:8px;">
+                                        <input type="password" id="accuweatherTokenInput" placeholder="AccuWeather API Key girin..." class="form-control" />
+                                        <button class="btn btn-primary" id="btnSaveAccuweatherToken" onclick="dashboard.saveAccuweatherToken()">Kaydet</button>
+                                    </div>
+                                    <small style="font-size:11px; color:var(--text-secondary); margin-top:4px; display:block;">
+                                        * Anahtar girildiğinde garson ekranında konum koordinatlarıyla (GPS/WiFi) canlı AccuWeather kullanılır.
+                                    </small>
+                                </div>
+                                <div class="form-group" style="margin-top:14px;">
+                                    <label>Google Gemini API Anahtarı (AI Garson Replikleri):</label>
+                                    <div style="display:flex; gap:8px;">
+                                        <input type="password" id="geminiTokenInput" placeholder="Gemini API Key girin..." class="form-control" />
+                                        <button class="btn btn-primary" id="btnSaveGeminiToken" onclick="dashboard.saveGeminiToken()">Kaydet</button>
+                                    </div>
+                                    <small style="font-size:11px; color:var(--text-secondary); margin-top:4px; display:block;">
+                                        * İsteğe bağlıdır. Boş bırakıldığında yerel akıllı motor sıfır gecikmeyle çalışır.
+                                    </small>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </section>
