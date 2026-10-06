@@ -24,48 +24,58 @@ class LoginManager {
 
     attachEventListeners() {
         // Form submission
-        this.form.addEventListener('submit', (e) => this.handleLogin(e));
+        if (this.form) {
+            this.form.addEventListener('submit', (e) => this.handleLogin(e));
+        }
 
         // Toggle password visibility
-        this.togglePasswordBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            this.togglePasswordVisibility();
-        });
+        if (this.togglePasswordBtn) {
+            this.togglePasswordBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.togglePasswordVisibility();
+            });
+        }
 
         // Real-time validation
-        this.usernameInput.addEventListener('blur', () => this.validateUsername());
-        this.passwordInput.addEventListener('blur', () => this.validatePassword());
+        if (this.usernameInput) {
+            this.usernameInput.addEventListener('blur', () => this.validateUsername());
+            this.usernameInput.addEventListener('input', () => this.clearErrorMessage('usernameError'));
+        }
+        if (this.passwordInput) {
+            this.passwordInput.addEventListener('blur', () => this.validatePassword());
+            this.passwordInput.addEventListener('input', () => this.clearErrorMessage('passwordError'));
+        }
 
         // Forgot password
-        document.getElementById('forgotPassword').addEventListener('click', (e) => {
-            e.preventDefault();
-            this.openForgotPasswordModal();
-        });
+        const forgotBtn = document.getElementById('forgotPassword');
+        if (forgotBtn) {
+            forgotBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.openForgotPasswordModal();
+            });
+        }
 
         // Modal close button
         const closeBtn = document.querySelector('.close');
-        closeBtn.addEventListener('click', () => this.closeForgotPasswordModal());
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => this.closeForgotPasswordModal());
+        }
 
         // Forgot password form
         const forgotForm = document.getElementById('forgotPasswordForm');
-        forgotForm.addEventListener('submit', (e) => this.handleForgotPassword(e));
+        if (forgotForm) {
+            forgotForm.addEventListener('submit', (e) => this.handleForgotPassword(e));
+        }
 
         // Close modal when clicking outside
         window.addEventListener('click', (e) => {
             const modal = document.getElementById('forgotPasswordModal');
-            if (e.target === modal) {
+            if (modal && e.target === modal) {
                 this.closeForgotPasswordModal();
             }
         });
-
-        // Clear error messages on input
-        this.usernameInput.addEventListener('input', () => {
-            this.clearErrorMessage('usernameError');
-        });
-        this.passwordInput.addEventListener('input', () => {
-            this.clearErrorMessage('passwordError');
-        });
     }
+
 
     setupAlerts() {
         // Check for query parameters indicating redirect from other pages
@@ -177,41 +187,51 @@ class LoginManager {
                 body: JSON.stringify({
                     username: this.usernameInput.value.trim(),
                     password: this.passwordInput.value,
-                    remember_me: this.rememberMeCheckbox.checked
+                    remember_me: this.rememberMeCheckbox ? this.rememberMeCheckbox.checked : false
                 })
             });
 
-            const data = await response.json();
+            const contentType = response.headers.get('content-type') || '';
 
-            if (response.ok) {
-                // Save username if remember me is checked
-                if (this.rememberMeCheckbox.checked) {
+            if (response.ok && contentType.includes('application/json')) {
+                const data = await response.json();
+                if (this.rememberMeCheckbox && this.rememberMeCheckbox.checked) {
                     localStorage.setItem('saved_username', this.usernameInput.value.trim());
                 } else {
                     localStorage.removeItem('saved_username');
                 }
 
-                // Save session token if provided
                 if (data.token) {
                     sessionStorage.setItem('auth_token', data.token);
                 }
 
                 this.showAlert('Giriş başarılı! Yönlendiriliyorsunuz...', 'success');
                 
-                // Redirect after showing message
                 setTimeout(() => {
                     window.location.href = '/dashboard';
-                }, 1500);
-            } else {
+                }, 800);
+            } else if (contentType.includes('application/json')) {
+                const data = await response.json();
                 this.showAlert(data.message || 'Giriş başarısız. Kullanıcı adı veya şifreyi kontrol edin.', 'error');
+            } else {
+                // Fallback to traditional form submission
+                this.form.action = '/login';
+                this.form.method = 'POST';
+                this.form.submit();
             }
         } catch (error) {
             console.error('Login error:', error);
-            this.showAlert('Bir hata oluştu. Lütfen daha sonra tekrar deneyin.', 'error');
+            // Fallback to traditional form submission
+            if (this.form) {
+                this.form.action = '/login';
+                this.form.method = 'POST';
+                this.form.submit();
+            }
         } finally {
             this.setLoginButtonLoading(false);
         }
     }
+
 
     async handleForgotPassword(e) {
         e.preventDefault();

@@ -65,23 +65,26 @@ class DashboardBase {
 
             if (response.ok) {
                 const data = await response.json();
-                document.getElementById('username').textContent = data.username;
+                const usernameElem = document.getElementById('username');
+                if (usernameElem && data.username) {
+                    usernameElem.textContent = data.username;
+                }
                 
                 // Update settings fields if they exist
                 if (document.getElementById('settingsUsername')) {
-                    document.getElementById('settingsUsername').value = data.username;
+                    document.getElementById('settingsUsername').value = data.username || '';
                 }
                 if (document.getElementById('settingsEmail')) {
-                    document.getElementById('settingsEmail').value = data.email;
+                    document.getElementById('settingsEmail').value = data.email || '';
                 }
                 if (document.getElementById('createdAt')) {
-                    document.getElementById('createdAt').value = data.created_at;
+                    document.getElementById('createdAt').value = data.created_at || '';
                 }
                 if (document.getElementById('lastLogin')) {
                     document.getElementById('lastLogin').value = data.last_login || 'Hiç';
                 }
             } else if (response.status === 401) {
-                window.location.href = '/admin?session_expired=true';
+                window.location.href = '/login?session_expired=true';
             }
         } catch (error) {
             console.error('Error loading profile:', error);
@@ -100,14 +103,17 @@ class DashboardBase {
             if (response.ok) {
                 this.showAlert('Çıkış yapılıyor...', 'success');
                 setTimeout(() => {
-                    window.location.href = '/admin';
-                }, 1500);
+                    window.location.href = '/login';
+                }, 1000);
+            } else {
+                window.location.href = '/login';
             }
         } catch (error) {
             console.error('Error logging out:', error);
-            window.location.href = '/admin';
+            window.location.href = '/login';
         }
     }
+
 
     switchTab(tabName) {
         // Hide all tab contents

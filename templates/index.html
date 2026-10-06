@@ -97,7 +97,7 @@
                 <!-- 1. Customer Profile Card -->
                 <div class="customer-profile-card">
                     <div class="profile-left">
-                        <img id="detailAvatar" src="/static/images/default_user.png" alt="Müşteri Görseli" class="profile-avatar" />
+                        <img id="detailAvatar" src="/static/images/default_user.svg" alt="Müşteri Görseli" class="profile-avatar" onerror="this.onerror=null; this.src='/static/images/default_user.svg';" />
                         <div>
                             <div class="profile-name" id="detailName">Müşteri Adı</div>
                             <div class="profile-tags">
@@ -123,35 +123,58 @@
                     </div>
                 </div>
 
-                <!-- 2. AI Waiter Speech Card (Konuşma Asistanı) -->
-                <div class="ai-pitch-card">
-                    <div class="pitch-header">
-                        <div class="pitch-title">
-                            <span class="material-symbols-outlined" style="font-size: 18px;">auto_awesome</span>
-                            <span>AI Garson Konuşma Asistanı</span>
-                        </div>
-                        <span style="font-size: 11px; color: var(--primary);" id="pitchContextTag">🌤️ 24°C • İkindi Saati</span>
-                    </div>
-                    <div class="pitch-quote" id="waiterPitchText">
-                        "Ahmet Bey hoş geldiniz! Bugün hava sıcak, favoriniz olan Buzlu Karamel Latte hazırlayalım mı?"
-                    </div>
-                </div>
-
-                <!-- 3. Contextual Recommendations Section -->
+                <!-- 2. Contextual Recommendations Section -->
                 <div>
                     <div class="section-title-row">
                         <div class="section-title">
                             <span class="material-symbols-outlined" style="color: #f59e0b; font-size: 20px;">stars</span>
-                            <span>Bugünkü Akıllı Öneriler (Durumsal AI)</span>
+                            <span id="recsSectionTitle">Kişiye Özel Akıllı Öneriler</span>
+                            <span class="recs-user-pill" id="recsUserPill" style="display: none;">Kişisel Profil</span>
                         </div>
-                        <span style="font-size: 12px; color: var(--text-secondary);">Müşteri geçmişi, hava ve saat uyumu ile seçildi</span>
+                        <span id="recsSectionSubtitle" style="font-size: 12px; color: var(--text-secondary);">Müşteri geçmişi, favori lezzetler ve durumsal etkenlere göre seçildi</span>
                     </div>
                     <div class="recs-grid" id="recsGrid">
                         <!-- Loaded dynamically by waiter.js -->
                     </div>
                 </div>
 
-                <!-- 4. Order Tray / Checkout Box -->
+                <!-- 4. Full Menu & Product Catalog Section -->
+                <div class="menu-catalog-card">
+                    <div class="catalog-header-row">
+                        <div class="section-title">
+                            <span class="material-symbols-outlined" style="color: #60a5fa; font-size: 20px;">restaurant_menu</span>
+                            <span>Tüm Menü & Ürün Kataloğu</span>
+                            <span class="catalog-count-pill" id="catalogCountPill">0 ürün</span>
+                        </div>
+                        <div class="catalog-search-wrap">
+                            <span class="material-symbols-outlined catalog-search-icon">search</span>
+                            <input 
+                                type="text" 
+                                id="catalogSearchInput" 
+                                class="catalog-search-input" 
+                                placeholder="Ürün veya kategori ara..." 
+                                oninput="waiterTerminal.handleCatalogSearch(this.value)"
+                                autocomplete="off"
+                                spellcheck="false"
+                            />
+                            <button class="catalog-clear-btn" id="catalogClearBtn" type="button" onclick="waiterTerminal.clearCatalogSearch()" title="Aramayı Temizle" style="display: none;">
+                                <span class="material-symbols-outlined" style="font-size: 16px;">close</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Category Filter Tabs -->
+                    <div class="catalog-category-bar" id="catalogCategoryBar">
+                        <!-- Populated dynamically -->
+                    </div>
+
+                    <!-- Products Grid -->
+                    <div class="catalog-products-grid" id="catalogProductsGrid">
+                        <!-- Populated dynamically -->
+                    </div>
+                </div>
+
+                <!-- 5. Order Tray / Checkout Box -->
                 <div class="order-tray-card">
                     <div style="display: flex; justify-content: space-between; align-items: center;">
                         <h4 style="font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px;">
@@ -162,7 +185,7 @@
                     </div>
 
                     <div class="tray-items-list" id="trayItemsList">
-                        <p style="color: var(--text-muted); font-size: 12px; text-align: center; margin: 10px 0;">Henüz ürün eklenmedi. Yukarıdaki akıllı önerilerden tıklayarak ekleyin.</p>
+                        <p style="color: var(--text-muted); font-size: 12px; text-align: center; margin: 10px 0;">Henüz ürün eklenmedi. Menüden veya akıllı önerilerden tıklayarak ekleyin.</p>
                     </div>
 
                     <div class="waiter-action-footer">
@@ -179,6 +202,9 @@
             </div>
         </section>
     </main>
+
+    <!-- Toast Notification Container (Bottom Right) -->
+    <div id="waiterToastContainer" class="waiter-toast-container"></div>
 
     <script src="{{ url_for('static', filename='waiter.js') }}"></script>
 </body>

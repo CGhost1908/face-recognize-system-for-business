@@ -188,6 +188,10 @@ class RecommendationService:
             for row in cursor.fetchall():
                 recent_item_ids.add(row["product_id"])
 
+            # Query customer preferences table
+            cursor.execute("SELECT food, preference FROM customer_preferences WHERE user_name = ?", (user_name,))
+            user_preferences = [dict(row) for row in cursor.fetchall()]
+
         conn.close()
 
         # Parse context parameters
@@ -200,6 +204,7 @@ class RecommendationService:
         weather_desc = str(weather_data.get("description", "Açık"))
 
         has_user_history = len(user_item_counts) > 0
+        display_name = user_name if user_name and not user_name.lower().startswith("guest") else "Müşteri"
 
         # Calculate scores
         for p in products:
@@ -217,18 +222,30 @@ class RecommendationService:
             score = 0.0
             reason_badge = ""
 
-            # A. User History Score (Max ~60)
+            # Check explicit customer preferences first
+            if user_preferences:
+                for pref in user_preferences:
+                    food_term = (pref.get("food") or "").strip().lower()
+                    pref_term = (pref.get("preference") or "").strip()
+                    if food_term and (food_term in name_lower or food_term in cat_lower):
+                        score += 50
+                        reason_badge = f"🎯 Özel Tercih: {pref_term}" if pref_term else "🎯 Tercih Edilen"
+                        break
+
+            # A. User History Score (Highest Priority for Personalized AI)
             if has_user_history:
                 if user_qty >= 2:
-                    score += (user_qty * 25) + 10
-                    reason_badge = f"⭐ Favoriniz ({user_qty} kez)"
+                    score += (user_qty * 40) + 30
+                    if not reason_badge:
+                        reason_badge = f"⭐ {display_name} Tercihi ({user_qty}x)"
                 elif user_qty == 1:
-                    score += 25
-                    reason_badge = "Daha Önce Sipariş Edildi"
+                    score += 35
+                    if not reason_badge:
+                        reason_badge = f"Önceki Sipariş ({user_qty}x)"
                 if is_recent:
-                    score += 15
+                    score += 20
                 if cat_qty > 0:
-                    score += min(cat_qty * 3, 12)
+                    score += min(cat_qty * 5, 20)
 
             # B. Weather Context Score (Max ~35)
             is_cold_drink = any(k in name_lower or k in cat_lower for k in ["soğuk", "soguk", "cold", "buz", "portakal", "limonata", "frappe"])
@@ -286,7 +303,7 @@ class RecommendationService:
         top_recommendations = products[:4]
 
         # Generate Waiter Speech Card
-        waiter_pitch = self._generate_waiter_pitch(user_name, top_recommendations, temp, current_hour)
+        waiter_pitch = self._generate_waiter_pitch(user_name, top_recommendations, temp, current_hour, weather_desc)
 
         return {
             "success": True,
@@ -300,19 +317,41 @@ class RecommendationService:
             }
         }
 
-    def _generate_waiter_pitch(self, user_name, top_recommendations, temp, current_hour):
+    def _generate_waiter_pitch(self, user_name, top_recommendations, temp, current_hour, weather_desc="Açık"):
         if not top_recommendations:
             return "Hoş geldiniz! Menümüzden dilediğiniz lezzeti hazırlayabiliriz."
+
+        top1 = top_recommendations[0]["product_name"]
+        top2 = top_recommendations[1]["product_name"] if len(top_recommendations) > 1 else ""
 
         # Check if Gemini token is configured in system settings
         try:
             from database import get_setting
-            gemini_token = get_setting("gemini_api_key")
-        except Exception:
-            gemini_token = None
-
-        top1 = top_recommendations[0]["product_name"]
-        top2 = top_recommendations[1]["product_name"] if len(top_recommendations) > 1 else ""
+            gemini_token = get_setting("gemini_api_key") or os.environ.get("GEMINI_API_KEY")
+            if gemini_token:
+                import requests
+                prompt = (
+                    f"Bir kafede garson için müşteriye söylenecek tek cümlelik, samimi, güler yüzlü ve profesyonel bir karşılama/öneri repliği yaz.\n"
+                    f"Müşteri: {user_name or 'Misafir'}\n"
+                    f"Hava Durumu: {temp:.0f}°C, {weather_desc}\n"
+                    f"Günün Saati: Saat {current_hour:.0f}\n"
+                    f"Öne Çıkan Menü Ürünleri: {top1}, {top2}\n"
+                    f"Sadece söylenecek tek cümleyi tırnaksız olarak dön, başka açıklama yazma."
+                )
+                gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_token}"
+                g_res = requests.post(
+                    gemini_url,
+                    json={"contents": [{"parts": [{"text": prompt}]}]},
+                    timeout=3.0
+                )
+                if g_res.status_code == 200:
+                    cand = g_res.json().get("candidates", [])
+                    if cand and "content" in cand[0] and "parts" in cand[0]["content"]:
+                        gemini_pitch = cand[0]["content"]["parts"][0].get("text", "").strip()
+                        if gemini_pitch:
+                            return gemini_pitch
+        except Exception as ge:
+            print(f"[WARN] Gemini waiter pitch generation fallback to template: {ge}")
 
         # Time phrase
         if 6 <= current_hour < 11.5:

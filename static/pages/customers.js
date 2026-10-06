@@ -74,6 +74,7 @@ class CustomersPage {
                             <td>${(customer.total_spent || 0).toFixed(2)} ₺</td>
                             <td>
                                 <button class="btn btn-secondary" onclick="customersPage.viewCustomer(${customer.id}, '${dashboardBase.escapeHtml(customer.name)}')">Görüntüle</button>
+                                ${customer.name.startsWith('Guest_') ? `<button class="btn btn-secondary" onclick="customersPage.renameGuest('${dashboardBase.escapeHtml(customer.name)}')">Adı Değiştir</button>` : ''}
                                 <button class="btn btn-secondary" onclick="customersPage.deleteCustomer(${customer.id})">Sil</button>
                             </td>
                         </tr>
@@ -203,6 +204,42 @@ class CustomersPage {
                 dashboardBase.showAlert('Müşteri silinirken hata oluştu', 'error');
             }
         }
+    }
+
+    renameGuest(oldName) {
+        const newName = prompt(`"${oldName}" isimini değiştir:`, '');
+        
+        if (newName === null) return; // User cancelled
+        if (!newName.trim()) {
+            dashboardBase.showAlert('Yeni isim boş olamaz', 'error');
+            return;
+        }
+        
+        if (newName.trim() === oldName) {
+            dashboardBase.showAlert('Aynı isim girildi', 'info');
+            return;
+        }
+        
+        // Call API to rename guest
+        fetch(`/api/rename_guest/${encodeURIComponent(oldName)}/${encodeURIComponent(newName.trim())}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(res => res.json())
+        .then(response => {
+            if (response.status === 'success') {
+                dashboardBase.showAlert(response.message, 'success');
+                this.loadCustomers();
+            } else {
+                dashboardBase.showAlert(response.error || 'Adı değiştirirken hata oluştu', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error renaming guest:', error);
+            dashboardBase.showAlert('Adı değiştirirken hata oluştu', 'error');
+        });
     }
 
     showAddCustomerModal() {

@@ -1,575 +1,608 @@
+/**
+ * UniFace Cafe Kiosk - Main Client Logic
+ * Real-Time Face Recognition, Personalized Product Ranking, and Instant Order Flow
+ */
+
 let customer_name = null;
-let recognitionInterval;
+let current_user_type = 'guest';
+let recognitionPollingInterval = null;
+let all_products = [];
+let active_category = 'all';
+let cart = {}; // product_id -> { id, name, price, quantity, category }
 
-let products = [];
-
-function getPreference(){
-    if (!customer_name) return alert("Kullanıcı tanınmadı.");
-
-    fetch(`/api/customer/${customer_name}/preferences`)
-    .then(res => res.json())
-    .then(response => {
-        if (response.error) {
-            alert("Tercih bulunamadı.");
-        } else {
-            const list = response.message;
-            const metin = list.join("\n");
-            alert("Tercihler:\n" + metin);
-        }
-    })
-    .catch(err => {
-        alert("Tercih verisi alınamadı.");
-        console.error(err);
-    });
-}
-
-function savePreference() {
-    if (!customer_name) return alert("Kullanıcı tanınmadı.");
-
-    const food = document.getElementById("food-name").value.trim();
-    const preference = document.getElementById("food-pref").value.trim();
-
-    if (!food || !preference) {
-        return alert("Lütfen hem yemek adını hem tercihi gir.");
-    }
-
-    fetch(`/api/preferences/${customer_name}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ food, preference })
-    })
-    .then(res => res.json())
-    .then(data => {
-        alert(data.message);
-        document.getElementById("food-name").value = "";
-        document.getElementById("food-pref").value = "";
-    })
-    .catch(err => {
-        alert("Tercih kaydedilemedi.");
-        console.error(err);
-    });
-}
-
-
-function updateFoodPercentage(customer_name){
-    fetch(`/api/get_food_percentage/${customer_name}`)
-    .then(res => res.json())
-    .then(response => {
-        console.log(response);
-        const container = document.querySelector('.percentage');
-        container.innerHTML = ''; 
-        for (const [food, percent] of Object.entries(response)) {
-            const p = document.createElement('p');
-            p.textContent = `${food}: %${percent}`;
-            container.appendChild(p);
-        }
-    })
-    .catch(err => console.error(err));
-}
-
-function updateRecognizedUser(name, id, image, last_login_date){
-    customer_name = name;
-
-    document.getElementById("recognized-name").innerText = "Welcome " + name;
-
-    document.querySelector(".user nav").style.display = "flex";
-
-    let imageElement = document.getElementById("recognized-image");
-    imageElement.src = "data:image/jpeg;base64," + image;
-    imageElement.style.display = "block";
-
-    addRecognizedCustomerToLastCustomers(name, image, last_login_date)
-    updateLastLoginDate();
-    updateTotalSpent();
-    updateFoodPercentage(customer_name);
-    showOrderHistory();
-}
-
-function showOrderHistory(){
-    if (!customer_name) return;
-    fetch(`/api/customer/${customer_name}/get_orders`)
-    .then(res => res.json())
-    .then(orders => {
-        const orderHistory = document.querySelector('.order-history');
-        orderHistory.innerHTML = '';
-    
-        console.log(orders);
-    
-        if(orders.length == 0){
-            const createOrder = document.createElement('div');
-            createOrder.classList.add('order-item');
-            createOrder.innerHTML = "Henüz sipariş vermediniz.";
-            orderHistory.appendChild(createOrder);
-        }else{
-            orders.forEach(order => {
-                const createOrder = document.createElement('div');
-                createOrder.classList.add('order-item');
-                createOrder.innerHTML = order;
-                orderHistory.appendChild(createOrder);
-            });
-        }
-    })
-    .catch(err => console.error(err));       
-}
-
-function updateTotalSpent(){
-    if (!customer_name) return;
-    fetch(`/api/customer/${customer_name}/total_spent`)
-    .then(res => res.json())
-    .then(response => {
-        document.getElementById("total-spent-text").innerText = `${response.total_spent} ₺`;
-    })
-    .catch(err => console.error(err));
-}
-
-function updateLastLoginDate(){
-    if (!customer_name) return;
-    document.querySelector('.last-login-label').style.display = 'flex';
-    fetch(`/api/customer/${customer_name}/last_login`)
-    .then(res => res.json())
-    .then(response => {
-        document.getElementById("last-login-text").innerText = response.last_login || "Yok";
-    })
-    .catch(err => console.error(err));
-}
-
-
-document.querySelectorAll('.order-item').forEach(item => {
-  let isScrolling = false;
-  let startX;
-  let scrollLeft;
-
-  item.addEventListener('mousedown', e => {
-    isScrolling = true;
-    startX = e.clientX;
-    scrollLeft = item.scrollLeft;
-    item.classList.add('active');
-
-    const onMouseMove = e => {
-      if (!isScrolling) return;
-      const distance = e.clientX - startX;
-      item.scrollLeft = scrollLeft - distance;
-    };
-
-    const onMouseUp = () => {
-      isScrolling = false;
-      item.classList.remove('active');
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-    };
-
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-  });
+// --- INITIALIZATION ---
+document.addEventListener("DOMContentLoaded", () => {
+    getProducts();
+    startContinuousRecognition();
 });
 
-//Weather
-if (navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(
-        position => {
-            const lat = position.coords.latitude;
-            const lon = position.coords.longitude;
-            fetch('/api/weather', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ lat: lat, lon: lon })
-            })
+// --- PRODUCT CATALOG & PERSONALIZED RECOMMENDATIONS ---
+
+function getProducts(customer = null) {
+    let url = '/api/products';
+    if (customer) {
+        url += '?customer_name=' + encodeURIComponent(customer);
+    }
+
+    fetch(url)
+        .then(res => res.json())
+        .then(data => {
+            all_products = data.products || [];
+            renderProducts();
+        })
+        .catch(err => {
+            console.error('Error fetching products:', err);
+        });
+}
+
+function normalizeCategoryStr(str) {
+    if (!str) return '';
+    return str.toLowerCase()
+        .replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ş/g, 's')
+        .replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ç/g, 'c')
+        .replace(/[^a-z0-9]/g, '');
+}
+
+function filterCategory(category, tabBtn) {
+    active_category = category;
+    
+    // Update active tab button style
+    const tabs = document.querySelectorAll('.category-tabs .tab-btn');
+    tabs.forEach(btn => btn.classList.remove('active'));
+    if (tabBtn) tabBtn.classList.add('active');
+
+    renderProducts();
+}
+
+function renderProducts() {
+    const grid = document.getElementById('productsGrid');
+    if (!grid) return;
+
+    if (!all_products || all_products.length === 0) {
+        grid.innerHTML = '<p class="empty-state">Menüde aktif ürün bulunmuyor.</p>';
+        return;
+    }
+
+    const normActive = normalizeCategoryStr(active_category);
+    const filtered = (active_category === 'all' || normActive === 'all' || normActive === 'tumu')
+        ? all_products 
+        : all_products.filter(p => normalizeCategoryStr(p.category) === normActive);
+
+    grid.innerHTML = '';
+
+    filtered.forEach(product => {
+        const pid = product.id;
+        const inCartQty = cart[pid] ? cart[pid].quantity : 0;
+        const isFavorite = product.is_favorite || false;
+        const isRecommended = product.is_recommended || false;
+        const badgeText = product.badge || '';
+
+        const card = document.createElement('div');
+        card.className = `product-card ${isFavorite ? 'favorite-item' : ''} ${isRecommended ? 'recommended-item' : ''}`;
+        card.dataset.id = pid;
+
+        // Image URL fallback
+        const imgUrl = product.image_url || '/static/images/placeholder.jpg';
+
+        card.innerHTML = `
+            ${badgeText ? `<div class="product-badge">${badgeText}</div>` : ''}
+            <div class="product-img-wrap">
+                <img src="${imgUrl}" alt="${product.product_name}" onerror="this.src='https://cdn.pixabay.com/photo/2015/07/12/14/26/coffee-842020_640.jpg'" />
+            </div>
+            <div class="product-body">
+                <span class="product-category">${product.category}</span>
+                <h3 class="product-title">${product.product_name}</h3>
+                <p class="product-desc">${product.description || ''}</p>
+                
+                <div class="product-footer">
+                    <span class="product-price">${parseFloat(product.price).toFixed(2)} ₺</span>
+                    
+                    <div class="product-action-box" id="action-box-${pid}">
+                        ${inCartQty > 0 
+                            ? `<div class="qty-counter">
+                                 <button class="btn-qty minus" onclick="updateItemQuantity(${pid}, -1)">−</button>
+                                 <span class="qty-number">${inCartQty}</span>
+                                 <button class="btn-qty plus" onclick="updateItemQuantity(${pid}, 1)">+</button>
+                               </div>`
+                            : `<button class="btn-add-cart" onclick="updateItemQuantity(${pid}, 1)">
+                                 <span class="material-symbols-outlined" style="font-size:16px;">add</span> Ekle
+                               </button>`
+                        }
+                    </div>
+                </div>
+            </div>
+        `;
+
+        grid.appendChild(card);
+    });
+}
+
+// --- SHOPPING CART MANAGEMENT ---
+
+function updateItemQuantity(productId, delta) {
+    const prod = all_products.find(p => p.id === productId);
+    if (!prod) return;
+
+    if (!cart[productId]) {
+        cart[productId] = {
+            id: prod.id,
+            product_id: prod.id,
+            name: prod.product_name,
+            product_name: prod.product_name,
+            price: parseFloat(prod.price),
+            quantity: 0,
+            category: prod.category
+        };
+    }
+
+    cart[productId].quantity += delta;
+
+    if (cart[productId].quantity <= 0) {
+        delete cart[productId];
+    }
+
+    updateCartUI();
+    updateProductCardAction(productId);
+}
+
+function updateProductCardAction(productId) {
+    const box = document.getElementById(`action-box-${productId}`);
+    if (!box) return;
+
+    const inCartQty = cart[productId] ? cart[productId].quantity : 0;
+    if (inCartQty > 0) {
+        box.innerHTML = `
+            <div class="qty-counter">
+                <button class="btn-qty minus" onclick="updateItemQuantity(${productId}, -1)">−</button>
+                <span class="qty-number">${inCartQty}</span>
+                <button class="btn-qty plus" onclick="updateItemQuantity(${productId}, 1)">+</button>
+            </div>
+        `;
+    } else {
+        box.innerHTML = `
+            <button class="btn-add-cart" onclick="updateItemQuantity(${productId}, 1)">
+                <span class="material-symbols-outlined" style="font-size:16px;">add</span> Ekle
+            </button>
+        `;
+    }
+}
+
+function updateCartUI() {
+    const cartCountElem = document.getElementById('cartItemCount');
+    const cartTotalElem = document.getElementById('cartTotalPrice');
+    const cartBar = document.getElementById('cartBottomBar');
+
+    let totalQty = 0;
+    let totalPrice = 0.0;
+
+    Object.values(cart).forEach(item => {
+        totalQty += item.quantity;
+        totalPrice += item.price * item.quantity;
+    });
+
+    if (cartCountElem) cartCountElem.innerText = `${totalQty} Ürün`;
+    if (cartTotalElem) cartTotalElem.innerText = `${totalPrice.toFixed(2)} ₺`;
+
+    if (cartBar) {
+        if (totalQty > 0) {
+            cartBar.classList.add('has-items');
+        } else {
+            cartBar.classList.remove('has-items');
+        }
+    }
+}
+
+// --- ORDER PLACEMENT FLOW ---
+
+function orderFood() {
+    const items = Object.values(cart).map(item => ({
+        product_id: item.id,
+        product_name: item.name,
+        quantity: item.quantity,
+        price: item.price
+    }));
+
+    if (items.length === 0) {
+        alert("Lütfen menüden en az bir ürün seçiniz.");
+        return;
+    }
+
+    const orderUser = customer_name || "Misafir";
+
+    const payload = {
+        user_name: orderUser,
+        items: items
+    };
+
+    fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    })
+    .then(res => res.json())
+    .then(response => {
+        if (response.success) {
+            alert(`🎉 ${response.message || 'Siparişiniz başarıyla alındı!'}\nToplam: ${response.total_amount.toFixed(2)} ₺`);
+            
+            // Clear cart
+            cart = {};
+            updateCartUI();
+            
+            // Refresh customer stats & re-rank favorites
+            if (customer_name) {
+                updateTotalSpent();
+                updateFoodPercentage(customer_name);
+                showOrderHistory();
+                getProducts(customer_name);
+            } else {
+                getProducts();
+            }
+        } else {
+            alert("❌ Sipariş verilemedi: " + (response.error || response.message));
+        }
+    })
+    .catch(err => {
+        console.error("Order placement error:", err);
+        alert("Bağlantı hatası oluştu.");
+    });
+}
+
+// --- REAL-TIME FACE RECOGNITION POLLING & USER UPDATES ---
+
+function startContinuousRecognition() {
+    if (recognitionPollingInterval) clearInterval(recognitionPollingInterval);
+
+    recognitionPollingInterval = setInterval(() => {
+        fetch('/api/current_recognized_person')
             .then(res => res.json())
-            .then(data => {
-                if (data.cod === 200) {
-                    const weather = data.weather[0].description;
-                    const temperature = data.main.temp;
-                    const iconCode = data.weather[0].icon;
-                    const iconUrl = `https://openweathermap.org/img/wn/${iconCode}@2x.png`;
-                    document.querySelector(".location").textContent = data.name;
-                    document.querySelector(".icon").src = iconUrl;
-                    document.querySelector(".temperature").textContent = temperature + "°C";
-                    document.querySelector("#temperature").value = temperature;
+            .then(response => {
+                if (response.recognized && response.name) {
+                    if (customer_name !== response.name) {
+                        updateRecognizedUser(
+                            response.name,
+                            response.user_type || 'customer',
+                            response.id,
+                            response.image,
+                            response.last_login_date,
+                            response.total_spent
+                        );
+                    }
                 } else {
-                    alert("Hava durumu alınamadı.");
-                    console.log(data);
+                    if (customer_name !== null) {
+                        clearRecognizedUser();
+                    }
                 }
             })
             .catch(err => {
-                console.error(err);
+                console.error('Recognition polling error:', err);
             });
-        },
-        error => {
-            console.error(error);
-        }
-    );
+    }, 600);
 }
 
-function getProducts(){
-    fetch('/api/get_products', {
-        method: 'GET',
-        headers: {
-            'Content-Type': 'application/json'
+function updateRecognizedUser(name, userType, id, image, last_login_date, total_spent) {
+    customer_name = name;
+    current_user_type = userType;
+
+    // 1. Update Header Greeting
+    const nameElem = document.getElementById("recognized-name");
+    if (nameElem) {
+        nameElem.innerText = `Hoş Geldiniz, ${name}!`;
+    }
+
+    const greetingTitle = document.getElementById("kioskGreeting");
+    const greetingSub = document.getElementById("kioskGreetingSub");
+    if (greetingTitle) {
+        greetingTitle.innerText = `Merhaba, ${name}`;
+    }
+    if (greetingSub) {
+        greetingSub.innerText = `Damak zevkinize göre en çok tercih ettiğiniz favori lezzetleriniz en başta hazırlandı!`;
+    }
+
+    // 2. User Badge Pill
+    const pill = document.getElementById("user-badge-pill");
+    const renameBox = document.getElementById("guest-rename-box");
+    if (pill) {
+        if (userType === 'customer') {
+            pill.className = "badge-pill customer";
+            pill.innerText = "Kayıtlı Müşteri";
+            if (renameBox) renameBox.style.display = 'none';
+        } else {
+            pill.className = "badge-pill guest";
+            pill.innerText = "Misafir";
+            if (renameBox) renameBox.style.display = 'block';
         }
-    })
-    .then(res => res.json())
-    .then(data => {
-        products = data.products || [];
-        console.log(products);
-        listProducts();
-    })
-    .catch(err => {
-        console.error('Error fetching products:', err);
-    });
+    }
+
+    // 3. User Avatar
+    const imgElem = document.getElementById("recognized-image");
+    if (imgElem && image) {
+        imgElem.src = image.startsWith('data:') ? image : ("data:image/jpeg;base64," + image);
+    }
+
+    // 4. Last Login & Total Spent
+    const lastLoginText = document.getElementById("last-login-text");
+    if (lastLoginText) {
+        lastLoginText.innerText = last_login_date || "Yeni Giriş";
+    }
+
+    const spentElem = document.getElementById("total-spent-text");
+    if (spentElem) {
+        spentElem.innerText = `${parseFloat(total_spent || 0).toFixed(2)} ₺`;
+    }
+
+    // 5. Update Favorite Foods Percentage & Past Orders
+    updateFoodPercentage(name);
+    showOrderHistory();
+
+    // 6. Automatically Fetch Personalized Product Ranking for Recognized Customer!
+    getProducts(name);
 }
 
-// const foods = [
-//   'mantı', 'köfte', 'makarna', 'tost', 'burger', 'balık', 'pizza',
-//   'çorba', 'menemen', 'kumpir', 'pilav', 'lahmacun', 'simit', 'yumurta',
-//   'patates kızartması', 'sosisli', 'salata', 'gözleme', 'döner'
-// ];
+function clearRecognizedUser() {
+    customer_name = null;
+    current_user_type = 'guest';
 
-// const drinks = [
-//   'kola', 'fanta', 'sprite', 'ayran', 'limonata', 'milkshake',
-//   'çay', 'kahve', 'su', 'soğuk çay', 'portakal suyu', 'elma suyu',
-//   'şalgam', 'soda', 'nescafe'
-// ];
+    const nameElem = document.getElementById("recognized-name");
+    if (nameElem) nameElem.innerText = "Müşteri Bekleniyor...";
 
-// function setupAutocomplete(inputId, resultsId, list) {
-//     const input = document.getElementById(inputId);
-//     const results = document.getElementById(resultsId);
+    const greetingTitle = document.getElementById("kioskGreeting");
+    const greetingSub = document.getElementById("kioskGreetingSub");
+    if (greetingTitle) greetingTitle.innerText = "Menü & Hızlı Sipariş";
+    if (greetingSub) greetingSub.innerText = "Kameraya bakarak giriş yaptığınızda favori ürünleriniz en başta listelenir.";
 
-//     input.addEventListener('input', () => {
-//         const query = input.value.toLowerCase().trim();
-//         results.innerHTML = '';
+    const pill = document.getElementById("user-badge-pill");
+    if (pill) {
+        pill.className = "badge-pill guest";
+        pill.innerText = "Misafir";
+    }
 
-//         if(!query){
-//             results.style.display = 'none';
-//             return;
-//         }
+    const renameBox = document.getElementById("guest-rename-box");
+    if (renameBox) renameBox.style.display = 'none';
 
-//         const matches = list.filter(item => item.toLowerCase().includes(query));
-//         matches.forEach(match => {
-//             const div = document.createElement('div');
-//             div.className = 'autocomplete-item';
-//             div.textContent = match;
-//             div.addEventListener('click', () => {
-//                 input.value = match;
-//                 results.innerHTML = '';
-//             });
-//             results.appendChild(div);
-//         });
+    const imgElem = document.getElementById("recognized-image");
+    if (imgElem) {
+        imgElem.src = "https://cdn.pixabay.com/photo/2023/02/18/11/00/icon-7797704_640.png";
+    }
 
-//         console.log(query)
-//         if (matches.length === 0){
-//             results.style.display = 'none';
-//         }else{
-//             results.style.display = 'block';
-//         }
-//     });
+    const lastLoginText = document.getElementById("last-login-text");
+    if (lastLoginText) lastLoginText.innerText = "--";
 
-//     input.addEventListener('keydown', (e) => {
-//         if (e.key === 'Enter') {
-//           const first = results.querySelector('.autocomplete-item');
-//           if (first) first.click();
-//         }
-//     });
+    const spentElem = document.getElementById("total-spent-text");
+    if (spentElem) spentElem.innerText = "0.00 ₺";
 
-//     document.addEventListener('click', (e) => {
-//         if(!results.contains(e.target) && e.target !== input){
-//             results.innerHTML = '';
-//             results.style.display = 'none';
-//         }
-//     });
-// }
+    const percentage = document.querySelector('.percentage');
+    if (percentage) percentage.innerHTML = 'Henüz sipariş verisi yok.';
 
-// document.addEventListener('DOMContentLoaded', function() {
+    const orderHistory = document.querySelector('.order-history');
+    if (orderHistory) orderHistory.innerHTML = 'Geçmiş sipariş bulunmuyor.';
 
-// });
+    // Reset products to standard popularity ranking
+    getProducts();
+}
 
+function updateFoodPercentage(customerName) {
+    if (!customerName) return;
+    fetch(`/api/get_food_percentage/${encodeURIComponent(customerName)}`)
+        .then(res => res.json())
+        .then(response => {
+            const container = document.querySelector('.percentage');
+            if (!container) return;
+            container.innerHTML = '';
+            const entries = Object.entries(response);
+            if (entries.length === 0 || (entries.length === 1 && entries[0][0] === "Veri yok")) {
+                container.innerHTML = 'Henüz sipariş verisi yok.';
+                return;
+            }
+            entries.forEach(([food, percent]) => {
+                const item = document.createElement('div');
+                item.className = 'pref-stat-row';
+                item.innerHTML = `
+                    <span class="pref-name">${food}</span>
+                    <span class="pref-val">%${percent}</span>
+                `;
+                container.appendChild(item);
+            });
+        })
+        .catch(err => console.error(err));
+}
 
-// function addFood() {
-//     const input = document.getElementById('food-input');
-//     const value = input.value.trim().toLowerCase();
-//     if (foods.includes(value)) {
-//         const container = document.getElementById('food-autocomplete-wrapper');
-//         const item = document.createElement('div');
-//         item.textContent = value;
-//         item.className = 'added-item';
-//         const preferenceInput = document.createElement('input');
-//         preferenceInput.type = 'text';
-//         preferenceInput.placeholder = 'Write your preference';
-//         preferenceInput.className = 'preference-input';
-//         item.appendChild(preferenceInput);
-//         container.querySelector('div').insertBefore(item, input);
-//         input.value = '';
-//     }
-// }
+function showOrderHistory() {
+    if (!customer_name) return;
+    fetch(`/api/customer/${encodeURIComponent(customer_name)}/get_orders`)
+        .then(res => res.json())
+        .then(orders => {
+            const orderHistory = document.querySelector('.order-history');
+            if (!orderHistory) return;
+            orderHistory.innerHTML = '';
 
-// function addDrink() {
-//     const input = document.getElementById('drink-input');
-//     const value = input.value.trim().toLowerCase();
-//     if (drinks.includes(value)) {
-//         const container = document.getElementById('drink-autocomplete-wrapper');
-//         const item = document.createElement('div');
-//         item.textContent = value;
-//         item.className = 'added-item';
-//         container.querySelector('div').insertBefore(item, input);
-//         input.value = '';
-//     }
-// }
+            if (!orders || orders.length === 0) {
+                orderHistory.innerHTML = '<div class="order-item-empty">Geçmiş sipariş bulunmuyor.</div>';
+            } else {
+                orders.slice(0, 8).forEach(order => {
+                    const div = document.createElement('div');
+                    div.className = 'order-history-item';
+                    div.innerHTML = `<span class="material-symbols-outlined history-icon">check_circle</span> <span>${order}</span>`;
+                    orderHistory.appendChild(div);
+                });
+            }
+        })
+        .catch(err => console.error(err));
+}
 
-function listProducts(){
-    const items = document.querySelector('.items');
-    if (!items || !products || products.length === 0) {
-        items.innerHTML = '<p style="grid-column: 1/-1; text-align: center; color: #999;">No products available</p>';
+function updateTotalSpent() {
+    if (!customer_name) return;
+    fetch(`/api/customer/${encodeURIComponent(customer_name)}/total_spent`)
+        .then(res => res.json())
+        .then(response => {
+            const spentElem = document.getElementById("total-spent-text");
+            if (spentElem) {
+                spentElem.innerText = `${parseFloat(response.total_spent || 0).toFixed(2)} ₺`;
+            }
+        })
+        .catch(err => console.error(err));
+}
+
+// --- GUEST SELF-NAMING / PROFILE CONVERSION ---
+
+function openRenameModal() {
+    const modal = document.getElementById('renameModal');
+    const input = document.getElementById('newCustomerNameInput');
+    if (modal) {
+        modal.style.display = 'flex';
+        if (input) {
+            input.value = '';
+            input.focus();
+        }
+    }
+}
+
+function closeRenameModal() {
+    const modal = document.getElementById('renameModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function submitRenameGuest() {
+    const input = document.getElementById('newCustomerNameInput');
+    const newName = input ? input.value.trim() : '';
+
+    if (!newName) {
+        alert("Lütfen adınızı giriniz.");
         return;
     }
-    
-    items.innerHTML = '';
-    
-    const groupedProducts = {};
-    products.forEach(product => {
-        const category = product.category || 'Diğer';
-        if (!groupedProducts[category]) {
-            groupedProducts[category] = [];
-        }
-        groupedProducts[category].push(product);
-    });
-    
-    Object.keys(groupedProducts).sort().forEach(category => {
-        const categoryHeader = document.createElement('div');
-        categoryHeader.className = 'category-header';
-        categoryHeader.innerHTML = `<h2>${category}</h2>`;
-        categoryHeader.style.gridColumn = '1 / -1';
-        items.appendChild(categoryHeader);
-        
-        groupedProducts[category].forEach(product => {
-            const productItem = document.createElement('div');
-            productItem.className = 'product-item';
-            productItem.innerHTML = `
-                <div class="product-header">
-                    <h3>${product.name}</h3>
-                </div>
-                <div class="product-price">${product.price}₺</div>
-                <button class="product-add-btn" onclick="addProductToOrder('${product.name}', ${product.price}, this)">Add</button>
-            `;
-            items.appendChild(productItem);
-        });
-    });
-}
 
-function addProductToOrder(productName, productPrice, btn) {
-    if (!btn) return;
-    
-    const quantityControls = document.createElement('div');
-    quantityControls.className = 'product-qty-controls';
-    quantityControls.dataset.productName = productName;
-    quantityControls.dataset.productPrice = productPrice;
-    quantityControls.innerHTML = `
-        <button class="qty-decrease" onclick="decreaseProductQty(this, '${productName}', ${productPrice})">−</button>
-        <input type="number" class="product-quantity" value="1" min="1" readonly>
-        <button class="qty-increase" onclick="increaseProductQty(this, '${productName}', ${productPrice})">+</button>
-    `;
-    
-    btn.replaceWith(quantityControls);
-}
-
-function increaseProductQty(btn, productName, price) {
-    const controls = btn.closest('.product-qty-controls');
-    const quantityInput = controls.querySelector('.product-quantity');
-    quantityInput.value = parseInt(quantityInput.value) + 1;
-}
-
-function decreaseProductQty(btn, productName, price) {
-    const controls = btn.closest('.product-qty-controls');
-    const quantityInput = controls.querySelector('.product-quantity');
-    const currentQty = parseInt(quantityInput.value);
-    
-    if (currentQty > 1) {
-        quantityInput.value = currentQty - 1;
-    } else {
-        const productItem = controls.closest('.product-item');
-        const addBtn = document.createElement('button');
-        addBtn.className = 'product-add-btn';
-        addBtn.textContent = 'Ekle';
-        addBtn.onclick = function() {
-            addProductToOrder(productName, price, this);
-        };
-        controls.replaceWith(addBtn);
+    if (!customer_name) {
+        alert("Aktif misafir bulunamadı.");
+        return;
     }
-}
 
-function orderFood(){
-    const productGrid = document.querySelector('.items');
-    const values = [];
-    let total = 0;
-
-    const qtyControls = productGrid.querySelectorAll('.product-qty-controls');
-    qtyControls.forEach(control => {
-        const productName = control.dataset.productName;
-        const productPrice = parseFloat(control.dataset.productPrice);
-        const quantity = parseInt(control.querySelector('.product-quantity').value) || 0;
-        
-        for (let i = 0; i < quantity; i++) {
-            values.push(productName);
-        }
-        total += productPrice * quantity;
-    });
-
-    if (!customer_name) return alert("Kullanıcı girisi yapin.");
-    
-    if (values.length === 0) return alert("Lütfen ürün seçiniz.");
-
-    fetch(`/api/order_food/${customer_name}`,{
+    fetch('/api/rename_guest', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-            name: customer_name,
-            foods: values,
-            total: total
+            guest_name: customer_name,
+            new_name: newName
         })
     })
     .then(res => res.json())
-    .then(response => {
-        alert(response.message);    
-        showOrderHistory();
-        updateTotalSpent();
-        updateFoodPercentage(customer_name);
-        
-        const qtyControls = productGrid.querySelectorAll('.product-qty-controls');
-        qtyControls.forEach(control => {
-            const productName = control.dataset.productName;
-            const productPrice = parseFloat(control.dataset.productPrice);
-            const addBtn = document.createElement('button');
-            addBtn.className = 'product-add-btn';
-            addBtn.textContent = 'Ekle';
-            addBtn.onclick = function() {
-                addProductToOrder(productName, productPrice, this);
-            };
-            control.replaceWith(addBtn);
-        });
+    .then(data => {
+        if (data.success) {
+            alert(`🎉 Hoş geldiniz, ${newName}! Profiliniz başarıyla oluşturuldu.`);
+            closeRenameModal();
+            customer_name = newName;
+            updateRecognizedUser(newName, 'customer', 0, '', 'Şimdi', 0);
+        } else {
+            alert("Hata: " + data.error);
+        }
     })
-    .catch(err => alert("Hata: " + err));
+    .catch(err => {
+        console.error("Rename guest error:", err);
+        alert("Profil kaydedilemedi.");
+    });
 }
 
-function openSuggestFood(){
-    document.querySelector('.suggestion').style.display = 'flex';
+// --- MENU SUGGESTION MODAL ---
+
+function openSuggestFood() {
+    const modal = document.getElementById('suggestionModal');
+    if (modal) modal.style.display = 'flex';
+    suggestFood();
 }
 
-function scrollVerticalLeft(scrollable){
-    scrollable.scrollBy({ left: -100, behavior: 'smooth' });
+function closeSuggestModal() {
+    const modal = document.getElementById('suggestionModal');
+    if (modal) modal.style.display = 'none';
 }
-
-function scrollVerticalRight(scrollable){
-    scrollable.scrollBy({ left: 100, behavior: 'smooth' });
-}
-
-document.addEventListener('click', function(event) {
-    if(event.target === document.querySelector('.suggestion') && event.target != document.querySelector('.suggestion-popup')){
-        document.querySelector('.suggestion').style.display = 'none';
-    }
-})
 
 function suggestFood() {
-    const drink = document.querySelector("#beverage").value;
-    const weather = document.querySelector("#weather").value;
-    const temperature = document.querySelector("#temperature").value;
-    const meal = document.querySelector("#meal").value;
-
-    fetch('/api/suggest_food', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({drink, weather, temperature, meal})
-    })
-    .then(res => res.json())
-    .then(response => {
-        alert(`Önerilen Yemek: ${response.suggestion}!`);
-    })
-    .catch(err => alert("Hata: " + err));
+    const customer = customer_name || '';
+    fetch('/api/suggest_food?customer=' + encodeURIComponent(customer))
+        .then(res => res.json())
+        .then(response => {
+            const resultBox = document.getElementById('suggestResult');
+            const nameBox = document.getElementById('suggestedFoodName');
+            if (resultBox && nameBox) {
+                nameBox.innerText = response.food || 'Caffe Latte';
+                resultBox.style.display = 'block';
+            }
+        })
+        .catch(err => console.error("Food suggestion error:", err));
 }
 
-function triggerRecognize(){
-    fetch('/api/recognize', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-    })
-    .then(res => res.json())
-    .then(response => {
-        if(response.error){
-            alert(response.error);
-            console.error("Yüz tanınamadı.");
-            return;
-        }
-        updateRecognizedUser(response.name, response.id, response.image, response.last_login_date);
-    })
-    .catch(error =>{
-        alert(error);
-        console.error(error);
-    });
-}
+// --- FULLSCREEN FOCUS MODE ---
 
-function toggleCameraMode(){
-    const videoFeed = document.getElementById('videoFeed');
-    if (videoFeed.style.display === 'none' || videoFeed.style.display === '') {
-        videoFeed.style.display = 'flex';
+function toggleCameraFullscreen() {
+    const overlay = document.getElementById('cameraFullscreenOverlay');
+    const fullVideo = document.getElementById('fullscreenVideoFeed');
+    const mainVideo = document.getElementById('videoFeed');
+    if (!overlay || !fullVideo || !mainVideo) return;
+
+    if (overlay.style.display === 'none' || overlay.style.display === '') {
+        fullVideo.src = mainVideo.src;
+        fullVideo.classList.remove('cover-mode');
+        const btnText = document.getElementById('fitModeText');
+        const btnIcon = document.getElementById('fitModeIcon');
+        if (btnText) btnText.textContent = 'Tam Kadraj (Sığdır)';
+        if (btnIcon) btnIcon.textContent = 'fit_screen';
+
+        overlay.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
     } else {
-        videoFeed.style.display = 'none';
+        fullVideo.src = '';
+        overlay.style.display = 'none';
+        document.body.style.overflow = 'auto';
+        if (document.fullscreenElement) {
+            document.exitFullscreen().catch(() => {});
+        }
     }
 }
 
-function getLastCustomersOnLoad(){
-    fetch('/api/get_last_customers', {
-        method:'POST',
-        headers:{
-            'Content-Type':'application/json'
-        },
-        body: JSON.stringify({ count:5 })
-    })
-    .then(res=>res.json())
-    .then(response=>{
-        const container=document.querySelector('.last-customers');
-        container.innerHTML='';
+function toggleFullscreenFitMode() {
+    const fullVideo = document.getElementById('fullscreenVideoFeed');
+    const btnText = document.getElementById('fitModeText');
+    const btnIcon = document.getElementById('fitModeIcon');
+    if (!fullVideo) return;
 
-        response.customers.forEach(customer=>{
-            const div=document.createElement('div');
-            div.className='customer-item';
-            div.id='lastLoginCustomer'+customer.name;
-            div.innerHTML=`
-                <img src="data:image/jpeg;base64,${customer.image}" alt="${customer.name}" />
-                <div class="last-user-info">
-                    <p><b>${customer.name}</b></p>
-                    <p>${customer.last_login_date}</p>
-                </div>
-            `;
-            container.appendChild(div);
-        });
-    });
-}
-
-function addRecognizedCustomerToLastCustomers(name, image, last_login_date){
-    const container = document.querySelector('.last-customers');
-
-    if(document.getElementById('lastLoginCustomer' + name)){
-        container.removeChild(document.getElementById('lastLoginCustomer' + name));
+    if (fullVideo.classList.contains('cover-mode')) {
+        fullVideo.classList.remove('cover-mode');
+        if (btnText) btnText.textContent = 'Tam Kadraj (Sığdır)';
+        if (btnIcon) btnIcon.textContent = 'fit_screen';
+    } else {
+        fullVideo.classList.add('cover-mode');
+        if (btnText) btnText.textContent = 'Ekranı Kapla';
+        if (btnIcon) btnIcon.textContent = 'fullscreen';
     }
-
-    const div = document.createElement('div');
-    div.className='customer-item';
-    div.id='lastLoginCustomer'+name;
-    div.innerHTML=`
-        <img src="data:image/jpeg;base64,${image}" alt="${name}" />
-        <div class="last-user-info">
-            <p><b>${name}</b></p>
-            <p>${last_login_date}</p>
-        </div>
-    `;
-    container.insertBefore(div, container.firstChild);
 }
 
+function toggleBrowserFullscreen() {
+    const overlay = document.getElementById('cameraFullscreenOverlay');
+    const target = overlay || document.documentElement;
+    if (!document.fullscreenElement) {
+        if (target.requestFullscreen) {
+            target.requestFullscreen().catch(() => {});
+        } else if (target.webkitRequestFullscreen) {
+            target.webkitRequestFullscreen();
+        } else if (target.msRequestFullscreen) {
+            target.msRequestFullscreen();
+        }
+    } else {
+        if (document.exitFullscreen) {
+            document.exitFullscreen().catch(() => {});
+        }
+    }
+}
 
-document.addEventListener("DOMContentLoaded", (event) => { 
-    getLastCustomersOnLoad();
-    getProducts();
-    listProducts();
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' || e.key === 'Esc') {
+        const overlay = document.getElementById('cameraFullscreenOverlay');
+        if (overlay && overlay.style.display === 'flex') {
+            toggleCameraFullscreen();
+        }
+        closeSuggestModal();
+        closeRenameModal();
+    }
 });
+
+
+
+
 

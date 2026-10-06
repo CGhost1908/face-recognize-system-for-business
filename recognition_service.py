@@ -688,7 +688,7 @@ class RecognitionService:
                 # Automatically register customer in venue presence for Waiter Service Terminal
                 try:
                     from database import add_or_update_presence
-                    add_or_update_presence(name, user_type)
+                    add_or_update_presence(name, user_type, face_image=f"/api/profile_image/{name}")
                 except Exception as pe:
                     print(f"[WARN] Failed to update presence for {name}: {pe}")
 

@@ -1011,6 +1011,58 @@ def handle_orders():
 # WAITER SERVICE TERMINAL & PRESENCE APIS
 # =====================================================================
 
+@app.route('/api/profile_image/<path:user_name>')
+def api_get_profile_image(user_name):
+    """
+    Returns the customer's face image:
+    1. Check if dataset/<user_name>/profile.jpg or 1.jpg exists on disk
+    2. Check if user has base64 image in users table
+    3. Return SVG/PNG fallback default user avatar
+    """
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    dataset_dir = os.path.join(base_dir, 'dataset', user_name)
+
+    # 1. Disk dataset check
+    for filename in ['profile.jpg', 'profile.png', '1.jpg', '1.png', '1_bak.jpg']:
+        file_path = os.path.join(dataset_dir, filename)
+        if os.path.isfile(file_path):
+            resp = send_from_directory(dataset_dir, filename, mimetype='image/jpeg')
+            resp.headers['Cache-Control'] = 'public, max-age=300'
+            return resp
+
+    # 2. Check users table in DB for base64 image
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT image FROM users WHERE name = ?", (user_name,))
+        row = cursor.fetchone()
+        conn.close()
+
+        if row and row['image']:
+            img_val = str(row['image']).strip()
+            if img_val.startswith('data:image'):
+                img_val = img_val.split(',', 1)[1]
+            if len(img_val) > 20:
+                raw_bytes = base64.b64decode(img_val)
+                resp = Response(raw_bytes, mimetype='image/jpeg')
+                resp.headers['Cache-Control'] = 'public, max-age=300'
+                return resp
+    except Exception as e:
+        print(f"[WARN] Error loading image for {user_name}: {e}")
+
+    # 3. Fallback default avatar
+    static_img_dir = os.path.join(base_dir, 'static', 'images')
+    default_svg = os.path.join(static_img_dir, 'default_user.svg')
+    if os.path.isfile(default_svg):
+        resp = send_from_directory(static_img_dir, 'default_user.svg', mimetype='image/svg+xml')
+        resp.headers['Cache-Control'] = 'public, max-age=3600'
+        return resp
+
+    resp = send_from_directory(static_img_dir, 'default_user.png', mimetype='image/png')
+    resp.headers['Cache-Control'] = 'public, max-age=3600'
+    return resp
+
+
 @app.route('/api/waiter/presence')
 def api_waiter_presence():
     """Return active customers in venue grouped by waiting_order and ordered."""
@@ -1040,7 +1092,15 @@ def api_waiter_presence():
         conn.close()
 
         total_spent = u_row["total_spent"] if u_row else 0.0
-        face_img = r.get("face_image") or (u_row["image"] if u_row else None) or "/static/images/default_user.png"
+
+        # Determine valid avatar URL or data URI
+        presence_img = (r.get("face_image") or "").strip()
+        if presence_img and (presence_img.startswith("/api/") or presence_img.startswith("data:image") or presence_img.startswith("http://") or presence_img.startswith("https://")):
+            face_img = presence_img
+        elif presence_img and presence_img.startswith("/static/") and not presence_img.startswith("/static/profiles/"):
+            face_img = presence_img
+        else:
+            face_img = f"/api/profile_image/{u_name}"
 
         item = {
             "id": r["id"],

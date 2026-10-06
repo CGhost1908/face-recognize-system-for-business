@@ -1,26 +1,40 @@
 {% extends "dashboard_base.html" %}
 
-{% block title %}Ürünler{% endblock %}
-{% block page_title %}Ürün Yönetimi{% endblock %}
+{% block title %}Ürünler & Sipariş Al{% endblock %}
+{% block page_title %}Ürün Yönetimi & Önerili Sipariş Sistemi{% endblock %}
 
 {% block content %}
 <section id="products-page">
-    <div class="page-header">
-        <h2>Ürün Yönetimi</h2>
+    <div class="page-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h2>Kafe Menüsü & Akıllı Sipariş</h2>
         <button class="btn btn-primary" id="addProductBtn">+ Yeni Ürün Ekle</button>
     </div>
     
-    <div class="search-filter">
-        <input type="text" id="searchInput" placeholder="Ürün ara...">
-        <select id="sortBy">
-            <option value="name">Ad'a göre sırala</option>
-            <option value="price">Fiyata göre</option>
-            <option value="stock">Stoka göre</option>
+    <!-- Customer Selection for Personalized Recommendations -->
+    <div class="customer-recommendation-bar" style="background: rgba(255,255,255,0.05); padding: 16px; border-radius: 12px; margin-bottom: 20px; border: 1px solid rgba(255,255,255,0.1);">
+        <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+            <label style="font-weight: 600; color: #40c4ff;"><i class="fas fa-user-tag"></i> Aktif Müşteri / Misafir:</label>
+            <select id="customerSelect" style="padding: 8px 14px; border-radius: 8px; border: 1px solid #444; background: #1e2430; color: #fff; min-width: 220px;">
+                <option value="">-- Tüm Müşteriler (Genel Popülerlik) --</option>
+            </select>
+            <span id="recommendationStatus" style="color: #00e676; font-size: 14px; font-weight: 500;">
+                ⭐ Seçilen müşterinin geçmiş siparişlerine göre öneriler en üstte gösterilir.
+            </span>
+        </div>
+    </div>
+
+    <div class="search-filter" style="display: flex; gap: 15px; margin-bottom: 20px;">
+        <input type="text" id="searchInput" placeholder="Menüde ürün ara..." style="flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #444; background: #1e2430; color: #fff;">
+        <select id="sortBy" style="padding: 10px; border-radius: 8px; border: 1px solid #444; background: #1e2430; color: #fff;">
+            <option value="recommended">⭐ Akıllı Öneriye Göre</option>
+            <option value="name">Ada Göre (A-Z)</option>
+            <option value="price_desc">Fiyata Göre (Yüksekten Düşüğe)</option>
+            <option value="price_asc">Fiyata Göre (Düşükten Yüksek)</option>
         </select>
     </div>
     
     <div class="products-container" id="productsContainer">
-        <!-- Products will be loaded here -->
+        <!-- Products grid loaded dynamically -->
     </div>
 </section>
 {% endblock %}

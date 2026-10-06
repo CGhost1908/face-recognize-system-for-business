@@ -34,6 +34,19 @@ class Dashboard {
                 this.switchPage(h, false);
             }
         });
+
+        // Guard against late browser/password-manager autofill into search input
+        setTimeout(() => {
+            const searchInput = document.getElementById('customerSearchInput');
+            if (searchInput && document.activeElement !== searchInput && searchInput.value) {
+                searchInput.value = '';
+                const clearBtn = document.getElementById('btnClearCustomerSearch');
+                if (clearBtn) clearBtn.style.display = 'none';
+                if (this.currentPage === 'customers') {
+                    this.filterCustomers();
+                }
+            }
+        }, 350);
     }
 
     setupNavigation() {
@@ -61,7 +74,14 @@ class Dashboard {
         // CRM Search Input
         const searchInput = document.getElementById('customerSearchInput');
         if (searchInput) {
-            searchInput.addEventListener('input', () => this.filterCustomers());
+            if (document.activeElement !== searchInput) {
+                searchInput.value = '';
+            }
+            searchInput.addEventListener('input', () => {
+                const clearBtn = document.getElementById('btnClearCustomerSearch');
+                if (clearBtn) clearBtn.style.display = searchInput.value ? 'inline-flex' : 'none';
+                this.filterCustomers();
+            });
         }
 
         // CRM Tab Filters
@@ -113,6 +133,12 @@ class Dashboard {
             this.loadCameraPresets();
             this.initWebRTCStream();
         } else if (page === 'customers') {
+            const searchInput = document.getElementById('customerSearchInput');
+            if (searchInput && document.activeElement !== searchInput) {
+                searchInput.value = '';
+                const clearBtn = document.getElementById('btnClearCustomerSearch');
+                if (clearBtn) clearBtn.style.display = 'none';
+            }
             this.loadAllCustomers();
         } else if (page === 'products') {
             this.loadAdminProducts();
@@ -202,7 +228,7 @@ class Dashboard {
         container.innerHTML = presets.map((p, idx) => {
             const isActive = String(p.cam_value) === String(activeSource);
             return `
-                <div class="dash-card" style="margin-bottom:0; padding:14px; border:1px solid ${isActive ? 'var(--primary)' : 'var(--border-color)'}; background:${isActive ? 'rgba(56, 189, 248, 0.1)' : 'var(--bg-main)'};">
+                <div class="dash-card" style="margin-bottom:0; padding:14px; border:1px solid ${isActive ? 'var(--border-highlight)' : 'var(--border-color)'}; background:${isActive ? 'var(--bg-card-hover)' : 'var(--bg-surface)'};">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
                         <h4 style="font-size:14px; font-weight:600;">${this.escapeHtml(p.cam_name)}</h4>
                         ${isActive ? '<span class="pulse-badge green">AKTİF</span>' : ''}
@@ -500,6 +526,16 @@ class Dashboard {
             }
         } catch (err) {
             console.error('Customers load error:', err);
+        }
+    }
+
+    clearCustomerSearch() {
+        const searchInput = document.getElementById('customerSearchInput');
+        if (searchInput) {
+            searchInput.value = '';
+            const clearBtn = document.getElementById('btnClearCustomerSearch');
+            if (clearBtn) clearBtn.style.display = 'none';
+            this.filterCustomers();
         }
     }
 
@@ -918,8 +954,8 @@ class Dashboard {
                 img.style.display = 'none';
                 if (badge) {
                     badge.textContent = 'Canlı Akış (WebRTC)';
-                    badge.style.color = '#38bdf8';
-                    badge.style.borderColor = 'rgba(56, 189, 248, 0.4)';
+                    badge.style.color = '#34d399';
+                    badge.style.borderColor = 'rgba(16, 185, 129, 0.4)';
                 }
             };
 

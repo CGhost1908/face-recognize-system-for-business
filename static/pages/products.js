@@ -1,11 +1,12 @@
-
 class ProductsPage {
     constructor() {
         this.products = [];
+        this.selectedCustomer = "";
         this.init();
     }
 
     init() {
+        this.loadCustomers();
         this.setupEventListeners();
         this.loadProducts();
     }
@@ -25,28 +26,52 @@ class ProductsPage {
         if (sortBy) {
             sortBy.addEventListener('change', (e) => this.sortProducts(e.target.value));
         }
+
+        const customerSelect = document.getElementById('customerSelect');
+        if (customerSelect) {
+            customerSelect.addEventListener('change', (e) => {
+                this.selectedCustomer = e.target.value;
+                this.loadProducts();
+            });
+        }
+    }
+
+    async loadCustomers() {
+        try {
+            const res = await fetch('/api/users');
+            if (res.ok) {
+                const data = await res.json();
+                const select = document.getElementById('customerSelect');
+                if (select && data.users) {
+                    select.innerHTML = '<option value="">-- Tüm Müşteriler (Genel Popülerlik) --</option>';
+                    data.users.forEach(u => {
+                        const opt = document.createElement('option');
+                        opt.value = u.name;
+                        const label = u.user_type === 'guest' ? ` Misafir: ${u.name}` : ` Müşteri: ${u.name}`;
+                        opt.textContent = label;
+                        select.appendChild(opt);
+                    });
+                }
+            }
+        } catch (err) {
+            console.error('Error loading customer list:', err);
+        }
     }
 
     async loadProducts() {
         try {
-            const response = await fetch('/api/get_products', {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json'
-                }
-            });
+            const url = this.selectedCustomer 
+                ? `/api/products?customer_name=${encodeURIComponent(this.selectedCustomer)}`
+                : '/api/products';
 
+            const response = await fetch(url);
             if (response.ok) {
                 const data = await response.json();
                 this.products = data.products || [];
                 this.displayProducts(this.products);
-            } else if (response.status === 404) {
-                // No products endpoint yet, show empty state
-                this.displayProducts([]);
             }
         } catch (error) {
             console.error('Error loading products:', error);
-            // Show empty state if endpoint doesn't exist yet
             this.displayProducts([]);
         }
     }
@@ -55,40 +80,50 @@ class ProductsPage {
         const container = document.getElementById('productsContainer');
         
         if (products.length === 0) {
-            container.innerHTML = '<p class="empty">Hiç ürün bulunmamaktadır. <a href="#" onclick="productsPage.showAddProductModal()">Yeni ürün ekleyin</a></p>';
+            container.innerHTML = '<div style="padding: 30px; text-align: center; color: #888;">Hiç ürün bulunmamaktadır.</div>';
             return;
         }
 
-        container.innerHTML = `
-            <table>
-                <thead>
-                    <tr>
-                        <th>Ürün Adı</th>
-                        <th>Kategori</th>
-                        <th>Fiyat</th>
-                        <th style="text-align: end;">İşlemler</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${products.map(product => `
-                        <tr>
-                            <td>${dashboardBase.escapeHtml(product.name)}</td>
-                            <td>${dashboardBase.escapeHtml(product.category || '-')}</td>
-                            <td>${(product.price || 0).toFixed(2)} ₺</td>
-                            <td>
-                                <button class="btn btn-secondary" onclick="productsPage.editProduct(${product.id})">Düzenle</button>
-                                <button class="btn btn-secondary" onclick="productsPage.deleteProduct(${product.id})">Sil</button>
-                            </td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        `;
+        let html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 20px;">';
+
+        products.forEach(p => {
+            const isRec = p.is_recommended;
+            const badgeHtml = isRec 
+                ? `<span style="position: absolute; top: 12px; right: 12px; background: linear-gradient(135deg, #FF9800, #F57C00); color: white; padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: bold; box-shadow: 0 2px 8px rgba(255,152,0,0.4);">⭐ Sizin İçin Önerilen</span>`
+                : '';
+
+            const userOrdersBadge = p.user_order_count > 0 
+                ? `<span style="font-size: 11px; color: #40c4ff; display: block; margin-top: 4px;"><i class="fas fa-history"></i> Daha önce ${p.user_order_count} kez sipariş verildi</span>`
+                : '';
+
+            const cardBorder = isRec ? 'border: 2px solid #FF9800; box-shadow: 0 4px 15px rgba(255,152,0,0.2);' : 'border: 1px solid rgba(255,255,255,0.08);';
+
+            html += `
+                <div style="position: relative; background: #1e2430; border-radius: 14px; padding: 18px; ${cardBorder} display: flex; flex-direction: column; justify-space-between;">
+                    ${badgeHtml}
+                    <div>
+                        <span style="font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #888; font-weight: 600;">${p.category || 'Genel'}</span>
+                        <h3 style="margin: 8px 0 6px 0; font-size: 18px; color: #fff;">${p.product_name}</h3>
+                        <p style="font-size: 13px; color: #aaa; margin-bottom: 12px; min-height: 36px;">${p.description || ''}</p>
+                        ${userOrdersBadge}
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 15px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.05);">
+                        <span style="font-size: 20px; font-weight: bold; color: #00e676;">${p.price.toFixed(2)} ₺</span>
+                        <button onclick="productsPage.quickOrder(${p.id}, '${p.product_name}')" style="background: #00e676; color: #000; font-weight: bold; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; transition: all 0.2s;">
+                            + Sipariş Ver
+                        </button>
+                    </div>
+                </div>
+            `;
+        });
+
+        html += '</div>';
+        container.innerHTML = html;
     }
 
     filterProducts(searchTerm) {
         const filtered = this.products.filter(p => 
-            p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            p.product_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
             (p.category && p.category.toLowerCase().includes(searchTerm.toLowerCase()))
         );
         this.displayProducts(filtered);
@@ -96,344 +131,61 @@ class ProductsPage {
 
     sortProducts(sortBy) {
         let sorted = [...this.products];
-        
-        if (sortBy === 'name') {
-            sorted.sort((a, b) => a.name.localeCompare(b.name));
-        } else if (sortBy === 'price') {
-            sorted.sort((a, b) => (b.price || 0) - (a.price || 0));
+        if (sortBy === 'recommended') {
+            sorted.sort((a, b) => (b.score || 0) - (a.score || 0));
+        } else if (sortBy === 'name') {
+            sorted.sort((a, b) => a.product_name.localeCompare(b.product_name));
+        } else if (sortBy === 'price_desc') {
+            sorted.sort((a, b) => b.price - a.price);
+        } else if (sortBy === 'price_asc') {
+            sorted.sort((a, b) => a.price - b.price);
         }
-        
         this.displayProducts(sorted);
     }
 
-    editProduct(productId) {
-        const product = this.products.find(p => p.id === productId);
-        if (product) {
-            this.showEditProductModal(product);
+    async quickOrder(productId, productName) {
+        let targetUser = this.selectedCustomer;
+        if (!targetUser) {
+            targetUser = prompt("Sipariş verilecek Müşteri / Misafir adını giriniz:");
+            if (!targetUser) return;
         }
-    }
 
-    deleteProduct(productId) {
-        if (confirm('Bu ürün silinecek. Emin misiniz?')) {
-            this.performDelete(productId);
-        }
-    }
-
-    async performDelete(productId) {
         try {
-            dashboardBase.showAlert('Ürün siliniyor...', 'info');
-            const response = await fetch(`/api/product/${productId}`, {
-                method: 'DELETE',
-                headers: {
-                    'Content-Type': 'application/json'
-                }
+            const res = await fetch('/api/orders', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    user_name: targetUser,
+                    items: [{ product_id: productId, quantity: 1 }]
+                })
             });
 
-            if (response.ok) {
-                const result = await response.json();
-                dashboardBase.showAlert('Ürün başarıyla silindi', 'success');
+            const data = await res.json();
+            if (data.success) {
+                alert(`✅ ${targetUser} için 1x ${productName} siparişi alındı! (Tutar: ${data.total_amount.toFixed(2)} ₺)`);
                 this.loadProducts();
             } else {
-                const error = await response.json();
-                dashboardBase.showAlert(error.error || 'Ürün silinirken hata oluştu', 'error');
+                alert(`❌ Sipariş hatası: ${data.error}`);
             }
-        } catch (error) {
-            console.error('Error deleting product:', error);
-            dashboardBase.showAlert('Sunucuya bağlanırken hata oluştu', 'error');
+        } catch (err) {
+            console.error('Order error:', err);
+            alert('Sipariş verilirken sunucu hatası oluştu.');
         }
     }
 
     showAddProductModal() {
-        // Create modal HTML
-        const modalHTML = `
-            <div id="addProductModal" style="
-                position: fixed;
-                top: 0;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                background: rgba(0,0,0,0.5);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                z-index: 9999;
-            ">
-                <div style="
-                    background: white;
-                    padding: 30px;
-                    border-radius: 12px;
-                    width: 90%;
-                    max-width: 500px;
-                    box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-                ">
-                    <h2 style="margin-bottom: 20px; color: #333;">Yeni Ürün Ekle</h2>
-                    
-                    <div style="margin-bottom: 15px;">
-                        <label style="display: block; margin-bottom: 5px; font-weight: 600;">Ürün Adı *</label>
-                        <input type="text" id="productName" placeholder="Ürün adı" style="
-                            width: 100%;
-                            padding: 10px;
-                            border: 1px solid #ddd;
-                            border-radius: 6px;
-                            font-size: 14px;
-                        ">
-                    </div>
+        const name = prompt("Yeni Ürün Adı:");
+        if (!name) return;
+        const category = prompt("Kategori (Kahve, Yiyecek, Tatlı vb.):") || "Genel";
+        const priceStr = prompt("Fiyat (TL):");
+        const price = parseFloat(priceStr);
+        if (isNaN(price)) return alert("Geçersiz fiyat!");
 
-                    <div style="margin-bottom: 15px;">
-                        <label style="display: block; margin-bottom: 5px; font-weight: 600;">Kategori (İsteğe Bağlı)</label>
-                        <input type="text" id="productCategory" placeholder="Kategori" style="
-                            width: 100%;
-                            padding: 10px;
-                            border: 1px solid #ddd;
-                            border-radius: 6px;
-                            font-size: 14px;
-                        ">
-                    </div>
-
-                    <div style="margin-bottom: 20px;">
-                        <label style="display: block; margin-bottom: 5px; font-weight: 600;">Fiyat *</label>
-                        <input type="number" id="productPrice" placeholder="0.00" min="0" step="0.01" style="
-                            width: 100%;
-                            padding: 10px;
-                            border: 1px solid #ddd;
-                            border-radius: 6px;
-                            font-size: 14px;
-                        ">
-                    </div>
-
-                    <div style="display: flex; gap: 10px;">
-                        <button onclick="productsPage.addProduct()" style="
-                            flex: 1;
-                            padding: 12px;
-                            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                            color: white;
-                            border: none;
-                            border-radius: 6px;
-                            cursor: pointer;
-                            font-weight: 600;
-                        ">Ekle</button>
-                        <button onclick="productsPage.closeAddProductModal()" style="
-                            flex: 1;
-                            padding: 12px;
-                            background: #e0e0e0;
-                            color: #333;
-                            border: none;
-                            border-radius: 6px;
-                            cursor: pointer;
-                            font-weight: 600;
-                        ">İptal</button>
-                    </div>
-                </div>
-            </div>
-        `;
-
-        // Remove existing modal if any
-        const existingModal = document.getElementById('addProductModal');
-        if (existingModal) {
-            existingModal.remove();
-        }
-
-        // Add modal to DOM
-        document.body.insertAdjacentHTML('beforeend', modalHTML);
-    }
-
-    closeAddProductModal() {
-        const modal = document.getElementById('addProductModal');
-        if (modal) {
-            modal.remove();
-        }
-    }
-
-    showEditProductModal(product) {
-        const modalHTML = `
-            <div id="editProductModal" style="
-                position: fixed;
-                top: 0;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                background: rgba(0,0,0,0.5);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                z-index: 9999;
-            ">
-                <div style="
-                    background: white;
-                    padding: 30px;
-                    border-radius: 12px;
-                    width: 90%;
-                    max-width: 500px;
-                    box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-                ">
-                    <h2 style="margin-bottom: 20px; color: #333;">Ürün Düzenle</h2>
-                    
-                    <div style="margin-bottom: 15px;">
-                        <label style="display: block; margin-bottom: 5px; font-weight: 600;">Ürün Adı *</label>
-                        <input type="text" id="editProductName" value="${dashboardBase.escapeHtml(product.name)}" placeholder="Ürün adı" style="
-                            width: 100%;
-                            padding: 10px;
-                            border: 1px solid #ddd;
-                            border-radius: 6px;
-                            font-size: 14px;
-                        ">
-                    </div>
-
-                    <div style="margin-bottom: 15px;">
-                        <label style="display: block; margin-bottom: 5px; font-weight: 600;">Kategori (İsteğe Bağlı)</label>
-                        <input type="text" id="editProductCategory" value="${dashboardBase.escapeHtml(product.category || '')}" placeholder="Kategori" style="
-                            width: 100%;
-                            padding: 10px;
-                            border: 1px solid #ddd;
-                            border-radius: 6px;
-                            font-size: 14px;
-                        ">
-                    </div>
-
-                    <div style="margin-bottom: 20px;">
-                        <label style="display: block; margin-bottom: 5px; font-weight: 600;">Fiyat *</label>
-                        <input type="number" id="editProductPrice" value="${product.price || 0}" placeholder="0.00" min="0" step="0.01" style="
-                            width: 100%;
-                            padding: 10px;
-                            border: 1px solid #ddd;
-                            border-radius: 6px;
-                            font-size: 14px;
-                        ">
-                    </div>
-
-                    <div style="display: flex; gap: 10px;">
-                        <button onclick="productsPage.updateProduct(${product.id})" style="
-                            flex: 1;
-                            padding: 12px;
-                            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                            color: white;
-                            border: none;
-                            border-radius: 6px;
-                            cursor: pointer;
-                            font-weight: 600;
-                        ">Kaydet</button>
-                        <button onclick="productsPage.closeEditProductModal()" style="
-                            flex: 1;
-                            padding: 12px;
-                            background: #e0e0e0;
-                            color: #333;
-                            border: none;
-                            border-radius: 6px;
-                            cursor: pointer;
-                            font-weight: 600;
-                        ">İptal</button>
-                    </div>
-                </div>
-            </div>
-        `;
-
-        const existingModal = document.getElementById('editProductModal');
-        if (existingModal) {
-            existingModal.remove();
-        }
-
-        document.body.insertAdjacentHTML('beforeend', modalHTML);
-    }
-
-    closeEditProductModal() {
-        const modal = document.getElementById('editProductModal');
-        if (modal) {
-            modal.remove();
-        }
-    }
-
-    async updateProduct(productId) {
-        const name = document.getElementById('editProductName').value.trim();
-        const category = document.getElementById('editProductCategory').value.trim();
-        const price = parseFloat(document.getElementById('editProductPrice').value);
-
-        if (!name) {
-            dashboardBase.showAlert('Lütfen ürün adı giriniz', 'error');
-            return;
-        }
-
-        if (!price || price < 0) {
-            dashboardBase.showAlert('Lütfen geçerli bir fiyat giriniz', 'error');
-            return;
-        }
-
-        const productData = {
-            product_name: name,
-            category: category || null,
-            price: price
-        };
-
-        try {
-            dashboardBase.showAlert('Ürün günceleniyor...', 'info');
-
-            const response = await fetch(`/api/product/${productId}`, {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(productData)
-            });
-
-            if (response.ok) {
-                const result = await response.json();
-                dashboardBase.showAlert(`"${name}" başarıyla güncellendi`, 'success');
-                this.closeEditProductModal();
-                this.loadProducts();
-            } else {
-                const error = await response.json();
-                dashboardBase.showAlert(error.message || 'Ürün güncellenirken hata oluştu', 'error');
-            }
-        } catch (error) {
-            console.error('Error updating product:', error);
-            dashboardBase.showAlert('Sunucuya bağlanırken hata oluştu', 'error');
-        }
-    }
-
-    async addProduct() {
-        const name = document.getElementById('productName').value.trim();
-        const category = document.getElementById('productCategory').value.trim();
-        const price = parseFloat(document.getElementById('productPrice').value);
-
-        if (!name) {
-            dashboardBase.showAlert('Lütfen ürün adı giriniz', 'error');
-            return;
-        }
-
-        if (!price || price < 0) {
-            dashboardBase.showAlert('Lütfen geçerli bir fiyat giriniz', 'error');
-            return;
-        }
-
-        const productData = {
-            product_name: name,
-            category: category || null,
-            price: price
-        };
-
-        try {
-            dashboardBase.showAlert('Ürün ekleniyor...', 'info');
-
-            const response = await fetch('/api/add_product', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(productData)
-            });
-
-            if (response.ok) {
-                const result = await response.json();
-                dashboardBase.showAlert(`"${name}" başarıyla eklendi`, 'success');
-                this.closeAddProductModal();
-                this.loadProducts();
-            } else {
-                const error = await response.json();
-                dashboardBase.showAlert(error.message || 'Ürün eklenirken hata oluştu', 'error');
-            }
-        } catch (error) {
-            console.error('Error adding product:', error);
-            dashboardBase.showAlert('Sunucuya bağlanırken hata oluştu', 'error');
-        }
+        fetch('/api/add_product', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ product_name: name, category: category, price: price })
+        }).then(() => this.loadProducts());
     }
 }
 
